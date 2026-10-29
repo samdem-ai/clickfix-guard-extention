@@ -1,0 +1,48 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1b1b1f;
+  --muted: #6b6b75;
+  --line: #e4e4ea;
+  --card: #f6f6f9;
+  --block: #c62828;
+  --warn: #ef6c00;
+  --ok: #2e7d32;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1b20;
+    --fg: #ececf1;
+    --muted: #a0a0ab;
+    --line: #34343c;
+    --card: #25252c;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  width: 360px;
+  max-height: 560px;
+  padding: 14px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+header { display: flex; align-items: center; gap: 8px; }
+h1 { font-size: 16px; margin: 0; flex: 1; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 16px 0 6px; }
+.status { color: var(--ok); font-weight: 600; font-size: 12px; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.stats div { background: var(--card); border-radius: 10px; padding: 10px; text-align: center; }
+.stats strong { display: block; font-size: 22px; }
+.stats span { color: var(--muted); font-size: 12px; }
+ul { list-style: none; margin: 0; padding: 0; max-height: 330px; overflow: auto; }
+li { border: 1px solid var(--line); border-left: 4px solid var(--block); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+li.warn { border-left-color: var(--warn); }
+.top { display: flex; justify-content: space-between; gap: 8px; }
+.host { font-weight: 600; word-break: break-all; }
+.time, .muted { color: var(--muted); font-size: 12px; }
+.reason { margin-top: 2px; }
+code { display: block; margin-top: 6px; padding: 6px; background: var(--card); border-radius: 6px; font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; max-height: 64px; overflow: hidden; }
+footer { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+button:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClickFix Guard</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="../icons/icon-32.png" alt="" width="24" height="24">
+    <h1>ClickFix Guard</h1>
+    <span class="status">Active</span>
+  </header>
+  <section class="stats">
+    <div><strong id="blocked">0</strong><span>blocked</span></div>
+    <div><strong id="warned">0</strong><span>warnings</span></div>
+  </section>
+  <h2>Recent detections</h2>
+  <ul id="log"></ul>
+  <p id="empty" class="muted">No malicious clipboard commands seen yet.</p>
+  <footer>
+    <button id="clear" type="button">Clear history</button>
+    <span class="muted">Stored only on this device</span>
+  </footer>
+  <script src="popup.js"></script>
+</body>
+</html>

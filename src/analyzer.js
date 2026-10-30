@@ -21,7 +21,7 @@
   const INVISIBLE_RE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
   const SUSPICIOUS_TLD_RE =
     /\bhttps?:\/\/[^\s/'"`]*\.(?:xyz|top|icu|click|shop|live|lol|cyou|sbs|cfd|bond|rest|online|site|fun|buzz|monster|quest|zip|mov|ru|su|tk|ml|ga|cf|gq|pw)(?::\d+)?(?:[/'"`\s]|$)/i;
-  const RAW_IP_URL_RE = /\b(?:https?:\/\/|\\\\)\d{1,3}(?:\.\d{1,3}){3}\b/i;
+  const RAW_IP_URL_RE = /(?:\bhttps?:\/\/|\\\\)\d{1,3}(?:\.\d{1,3}){3}\b/i; // URL or UNC/WebDAV share
   const ABUSED_HOST_RE =
     /\b(?:trycloudflare\.com|ngrok(?:-free)?\.(?:io|app|dev)|pastebin\.com|paste\.ee|transfer\.sh|temp\.sh|files\.catbox\.moe|litter\.catbox\.moe|0x0\.st|discord(?:app)?\.com\/attachments|bit\.ly|tinyurl\.com|rentry\.co|glitch\.me|workers\.dev)\b/i;
 
@@ -85,6 +85,12 @@
     [/press\s+enter|hit\s+enter/i, 1, "Page tells you to press Enter"],
     [/fix\s+(?:it|the\s+(?:error|issue|problem))|how\s+to\s+fix|copy\s+(?:the\s+)?fix|update\s+(?:your\s+)?(?:browser|driver|font)/i, 1, "Page offers a 'fix' to run"],
   ];
+
+  // Labels of buttons that copy as a side effect of "verifying" or "continuing".
+  const DECEPTIVE_TRIGGER_RE =
+    /verif|robot|human|captcha|continue|proceed|confirm|agree|accept|access|unlock|fix|update|download|install|open|view|play|watch|next|submit|check|start|ok\b|got it/i;
+  // Reasons that mean the page is hiding or misrepresenting what it copied.
+  const DECEPTION_IDS = new Set(["hidden_copy", "deceptive_trigger", "lure_text", "decoy_comment", "whitespace_padding", "invisible_chars"]);
 
   function normalize(text) {
     let s = String(text == null ? "" : text).slice(0, MAX_LEN);
@@ -181,7 +187,7 @@
     }
     const isCommand = reasons.length > 0;
     if (!isCommand) {
-      return { verdict: "allow", score: 0, reasons: [], decoded, signals: norm.signals };
+      return { verdict: "allow", score: 0, reasons: [], decoded, signals: norm.signals, isCommand: false, deceptive: false };
     }
 
     const ids = new Set(reasons.map((r) => r.id));
@@ -210,7 +216,21 @@
     }
     if (decoded.length) add("decoded_payload", 1, "Contains an encoded payload (decoded for inspection)");
 
-    if (ctx.programmatic) add("programmatic_copy", 1, "The page wrote this to your clipboard by script");
+    if (ctx.programmatic) {
+      add("programmatic_copy", 1, "The page wrote this to your clipboard by script");
+      // Intent mismatch: what was copied vs. what the user could see and click.
+      // These hold for any payload, so they catch commands no rule knows.
+      const trigger = typeof ctx.trigger === "string" ? ctx.trigger.trim() : "";
+      const saysCopy = /\bcop(?:y|ier)\b|\bclipboard\b/i.test(trigger);
+      if (ctx.visibleOnPage === false) {
+        add("hidden_copy", 3, "The copied command is not shown anywhere on the page");
+      }
+      if (trigger && !saysCopy && DECEPTIVE_TRIGGER_RE.test(trigger)) {
+        add("deceptive_trigger", 2, `The button you clicked ("${trigger.slice(0, 40)}") does not say it copies anything`, trigger);
+      } else if (saysCopy && ctx.visibleOnPage === true) {
+        add("honest_copy", -2, "Copied from text shown on the page with an explicit Copy button");
+      }
+    }
     const page = typeof ctx.pageText === "string" ? ctx.pageText.slice(0, MAX_LEN) : "";
     let lureScore = 0;
     for (const [re, w, label] of LURE_PHRASES) {
@@ -221,7 +241,8 @@
     const score = reasons.reduce((a, r) => a + r.weight, 0);
     const verdict = score >= BLOCK_AT ? "block" : score >= WARN_AT ? "warn" : "allow";
     reasons.sort((a, b) => b.weight - a.weight);
-    return { verdict, score, reasons, decoded, signals: norm.signals, lureScore };
+    const deceptive = reasons.some((r) => DECEPTION_IDS.has(r.id));
+    return { verdict, score, reasons, decoded, signals: norm.signals, lureScore, isCommand: true, deceptive };
   }
 
   // Text written to the clipboard instead of a blocked command. Starts with '#'

@@ -17,10 +17,12 @@
 
   function clean(d) {
     // The event is dispatched in the page, so treat its payload as untrusted.
-    if (!d || (d.verdict !== "block" && d.verdict !== "warn")) return null;
+    if (!d || !(d.verdict === "block" || d.verdict === "warn" || (d.verdict === "allow" && d.arm))) return null;
     const str = (v, n) => (typeof v === "string" ? v.slice(0, n) : "");
     return {
       verdict: d.verdict,
+      scrub: d.scrub === true,
+      arm: d.arm === true,
       score: Number(d.score) || 0,
       reasons: (Array.isArray(d.reasons) ? d.reasons : []).slice(0, 12).map((r) => ({
         id: str(r && r.id, 40),
@@ -44,19 +46,48 @@
     recent = recent.filter((t) => now - t < RATE_WINDOW_MS);
     if (recent.length >= RATE_MAX) return;
     recent.push(now);
+    if (d.scrub) send({ type: "scrub", reason: "page changed after copy" });
+    if (d.arm) send({ type: "arm" });
+    if (d.verdict === "allow") return; // armed silently, nothing to show or log
     // If the background is unreachable (extension reloaded), still warn locally.
     const fallback = () => { if (window === window.top) show(d); };
-    try {
-      Promise.resolve(api.runtime.sendMessage({ type: "detection", detection: d })).catch(fallback);
-    } catch (_) {
-      fallback();
-    }
+    send({ type: "detection", detection: d }, fallback);
   });
+
+  function send(msg, onFail) {
+    try {
+      Promise.resolve(api.runtime.sendMessage(msg)).catch(() => onFail && onFail());
+    } catch (_) {
+      if (onFail) onFail();
+    }
+  }
+
+  // --- Leave-the-browser guard (top frame only) --------------------------------
+  // After a risky but unblocked command is copied, leaving the browser within
+  // GUARD_MS (pressing Win+R, switching to Terminal) scrubs the clipboard.
+  const GUARD_MS = 15000;
+  let armedUntil = 0;
+  function disarm() { armedUntil = 0; }
+  function left(reason) {
+    if (Date.now() > armedUntil) return;
+    disarm();
+    send({ type: "scrub", reason });
+  }
 
   if (window === window.top) {
     api.runtime.onMessage.addListener((msg) => {
-      if (msg && msg.type === "show" && msg.detection) show(clean(msg.detection));
+      if (!msg) return;
+      if (msg.type === "show" && msg.detection) show(clean(msg.detection));
+      if (msg.type === "arm") armedUntil = Date.now() + GUARD_MS;
     });
+    window.addEventListener("blur", () => {
+      // Focus moving into an iframe also blurs the window; only a real exit
+      // from the page leaves the document without focus.
+      setTimeout(() => { if (!document.hasFocus()) left("left the browser after copying"); }, 0);
+    }, true);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") left("switched away after copying");
+    }, true);
   }
 
   // --- UI ---------------------------------------------------------------------
@@ -91,6 +122,7 @@
       border-left: 5px solid #ef6c00; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.3); padding: 12px 14px;
       font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #1b1b1f; }
     .toast .row { margin-top: 8px; }
+    .toast .note { margin-top: 6px; font-size: 13px; color: #8a4b00; }
     @media (prefers-color-scheme: dark) {
       .card, .toast { background: #1f1f24; color: #ececf1; }
       .site { color: #a9a9b3; }
@@ -179,10 +211,12 @@
     const timer = setTimeout(() => hostEl.remove(), 15000);
     const top = d.reasons.find((r) => r.label);
     root.append(el("div", { class: "toast", role: "status" },
-      el("b", null, "Copied a command that runs code from the internet"),
+      el("b", null, "Careful: you copied a command that can change your computer"),
       el("div", null, top ? top.label + ". " : "", "Only run it if you trust this site and meant to install something."),
+      d.arm ? el("div", { class: "note" }, "If you leave the browser in the next 15 seconds, it will be removed from your clipboard.") : null,
       evidence(d),
       el("div", { class: "row" },
+        d.arm ? el("button", { on: { click: () => { disarm(); clearTimeout(timer); hostEl.remove(); } } }, "I trust this site, keep it") : null,
         el("button", { on: { click: () => { clearTimeout(timer); hostEl.remove(); } } }, "Dismiss"))));
   }
 })();

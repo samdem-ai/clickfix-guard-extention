@@ -12,7 +12,7 @@ import os
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SHIP = ["manifest.json", "src", "popup", "icons", "LICENSE"]
+SHIP = ["manifest.json", "src", "popup", "offscreen", "icons", "LICENSE"]
 
 
 def files():

@@ -10,7 +10,8 @@ function item(entry) {
   top.className = "top";
   const host = document.createElement("span");
   host.className = "host";
-  host.textContent = `${entry.verdict === "block" ? "Blocked" : "Warned"} · ${entry.host || "unknown site"}`;
+  const label = { block: "Blocked", warn: "Warned", scrub: "Clipboard cleared" }[entry.verdict] || entry.verdict;
+  host.textContent = `${label} · ${entry.host || "unknown site"}`;
   const time = document.createElement("span");
   time.className = "time";
   time.textContent = new Date(entry.ts).toLocaleString();
@@ -34,12 +35,13 @@ async function render() {
   const { log = [], stats = {} } = await api.storage.local.get(["log", "stats"]);
   $("blocked").textContent = stats.block || 0;
   $("warned").textContent = stats.warn || 0;
+  $("scrubbed").textContent = stats.scrub || 0;
   $("log").replaceChildren(...log.slice(0, 30).map(item));
   $("empty").hidden = log.length > 0;
 }
 
 $("clear").addEventListener("click", async () => {
-  await api.storage.local.set({ log: [], stats: { block: 0, warn: 0 } });
+  await api.storage.local.set({ log: [], stats: { block: 0, warn: 0, scrub: 0 } });
   render();
 });
 

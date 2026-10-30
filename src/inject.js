@@ -44,6 +44,29 @@
     }
   }
 
+  // Last control the user activated, so a copy can be compared with what the
+  // button claimed to do ("Verify" vs "Copy").
+  let lastTrigger = { text: "", t: 0 };
+  const TRIGGER_SEL = "button, a, [role=button], input[type=button], input[type=submit], label, summary, [onclick]";
+  const noteTrigger = (e) => {
+    try {
+      const t = e.target && e.target.closest ? e.target.closest(TRIGGER_SEL) : null;
+      if (!t) return;
+      const text = (t.innerText || t.value || t.getAttribute("aria-label") || t.title || "").trim();
+      lastTrigger = { text: text.replace(/\s+/g, " ").slice(0, 80), t: Date.now() };
+    } catch (_) { /* detached node */ }
+  };
+  origAdd.call(window, "pointerdown", noteTrigger, true);
+  origAdd.call(window, "click", noteTrigger, true);
+  origAdd.call(window, "keydown", (e) => { if (e.key === "Enter" || e.key === " ") noteTrigger(e); }, true);
+  const currentTrigger = () => (Date.now() - lastTrigger.t < 5000 ? lastTrigger.text : "");
+
+  const squash = (s) => String(s).replace(/\s+/g, " ").trim().toLowerCase();
+  function visibleOnPage(text, page) {
+    const needle = squash(text).slice(0, 300);
+    return needle.length > 0 && squash(page).includes(needle);
+  }
+
   function selectedText() {
     const el = document.activeElement;
     if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT")) {
@@ -56,8 +79,10 @@
     return String(getSelection() || "");
   }
 
-  function report(result, text, source) {
+  function report(result, text, source, extra) {
     const detail = stringify({
+      scrub: !!(extra && extra.scrub),
+      arm: !!(extra && extra.arm),
       verdict: result.verdict,
       score: result.score,
       reasons: result.reasons.slice(0, 12),
@@ -71,18 +96,51 @@
     try { origDispatch.call(document, new CE(EVENT, { detail })); } catch (_) { /* detached doc */ }
   }
 
+  function context(s, programmatic) {
+    const page = pageText();
+    return { programmatic, pageText: page, trigger: programmatic ? currentTrigger() : "", visibleOnPage: visibleOnPage(s, page) };
+  }
+
   // Returns the analysis; reports anything that is not "allow".
   function inspect(text, source, programmatic) {
     const s = String(text == null ? "" : text);
     if (!s.trim() || s === noticeText()) return { verdict: "allow" };
     let result;
+    const ctx = context(s, programmatic);
     try {
-      result = A.analyze(s, { programmatic, pageText: pageText() });
+      result = A.analyze(s, ctx);
     } catch (_) {
       return { verdict: "allow" };
     }
-    if (result.verdict !== "allow") report(result, s, source);
+    if (result.verdict === "block") {
+      report(result, s, source);
+    } else if (result.isCommand && programmatic) {
+      // A command that is not blocked yet: if it is risky or deceptive, arm the
+      // leave-the-browser guard; either way re-check once the page has had time
+      // to show its "press Win+R" instructions.
+      const arm = result.verdict === "warn" || result.deceptive;
+      if (result.verdict === "warn" || arm) report(result, s, source, { arm });
+      recheck(s, source, ctx);
+    }
     return result;
+  }
+
+  // Lure instructions often appear only after the click. Re-score with the
+  // updated page; if it becomes a block, the clipboard is scrubbed through the
+  // extension (the page's user activation may be gone by then).
+  const RECHECK_MS = [800, 2000, 4500];
+  let recheckGen = 0;
+  function recheck(s, source, ctx) {
+    const gen = ++recheckGen;
+    RECHECK_MS.forEach((ms) => setTimeout(() => {
+      if (gen !== recheckGen) return; // a newer copy superseded this one
+      let r;
+      try { r = A.analyze(s, Object.assign({}, ctx, { pageText: pageText() })); } catch (_) { return; }
+      if (r.verdict === "block") {
+        recheckGen++;
+        report(r, s, source + " (re-checked after page changed)", { scrub: true });
+      }
+    }, ms));
   }
 
   function disguise(wrapper, original) {

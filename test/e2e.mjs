@@ -139,6 +139,12 @@ async function chromium(bin) {
           await send("Emulation.setFocusEmulationEnabled", { enabled: true }, fs).catch(() => {});
           return evaluate(fs, expr);
         },
+        // Headless Chromium keeps every tab "visible" and focused, so leaving is
+        // simulated: drop focus emulation, then deliver the window blur.
+        async leave() {
+          await send("Emulation.setFocusEmulationEnabled", { enabled: false }, s);
+          await evaluate(s, "window.dispatchEvent(new FocusEvent('blur')), true");
+        },
         async screenshot(file) {
           await send("Emulation.setDeviceMetricsOverride", { width: 1100, height: 760, deviceScaleFactor: 1, mobile: false }, s);
           const { data } = await send("Page.captureScreenshot", { format: "png" }, s);
@@ -217,6 +223,7 @@ async function firefox(bin) {
           if (!child) throw new Error("iframe context not found");
           return evaluate(child, expr);
         },
+        async leave() { /* opening another tab really blurs and hides this one */ },
         close: () => c.send("browsingContext.close", { context }),
       };
     },
@@ -311,7 +318,49 @@ async function runCases(b, results) {
     const verdict = await waitFor(() => p.eval(OVERLAY));
     clip = await p.eval(CLIP);
     check("installer one-liner copied unchanged", clip === "curl -fsSL https://get.docker.com | sh", { clip });
-    check("installer one-liner: non-blocking warning toast", verdict === "warn", { verdict });
+    check("visible command + Copy button: no warning", verdict === null, { verdict });
+    // Not armed: leaving the browser must not touch the clipboard.
+    const q = await b.open(`${BASE}/blank.html`);
+    await p.leave();
+    await sleep(800);
+    clip = await q.eval(CLIP);
+    check("leaving after a benign copy keeps the clipboard", clip === "curl -fsSL https://get.docker.com | sh", { clip });
+    await q.close();
+    await p.close();
+  }
+
+  // Risky command behind a misleading button: warned, then scrubbed on leaving.
+  {
+    const p = await b.open(`${BASE}/guard.html`);
+    await p.eval(RESET);
+    await p.eval(clickJs("#go"));
+    const verdict = await waitFor(() => p.eval(OVERLAY));
+    const before = await p.eval(CLIP);
+    check("misleading button: warning toast", verdict === "warn", { verdict });
+    check("misleading button: command still copied", before.startsWith("powershell -ExecutionPolicy"), { before });
+    const q = await b.open(`${BASE}/blank.html`); // user switches away (Win+R / Terminal)
+    await p.leave();
+    const clip = await waitFor(async () => {
+      const c = await q.eval(CLIP);
+      return c.startsWith(NOTICE_PREFIX) ? c : null;
+    });
+    check("leaving the browser scrubs the risky command", !!clip, { clip: await q.eval(CLIP) });
+    await q.close();
+    await p.close();
+  }
+
+  // Looks honest at copy time; Win+R instructions appear afterwards.
+  {
+    const p = await b.open(`${BASE}/delayed.html`);
+    await p.eval(RESET);
+    await p.eval(clickJs("#copy"));
+    const verdict = await waitFor(() => p.eval("document.querySelector('clickfix-guard-alert[data-verdict=block]') ? 'block' : null"), 8000);
+    const clip = await waitFor(async () => {
+      const c = await p.eval(CLIP);
+      return c.startsWith(NOTICE_PREFIX) ? c : null;
+    });
+    check("instructions shown after copy: escalated to block", verdict === "block", { verdict });
+    check("instructions shown after copy: clipboard scrubbed", !!clip, { clip: await p.eval(CLIP) });
     await p.close();
   }
 
@@ -325,7 +374,9 @@ async function runCases(b, results) {
     });
     const blocked = await p.eval("document.getElementById('blocked').textContent");
     check("popup lists logged detections", n >= 5, { n });
+    const cleared = await p.eval("document.getElementById('scrubbed').textContent");
     check("popup counts blocks", Number(blocked) >= 4, { blocked });
+    check("popup counts cleared clipboards", Number(cleared) >= 2, { cleared });
     await p.close();
   }
 }

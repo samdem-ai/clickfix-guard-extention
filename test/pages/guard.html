@@ -1,0 +1,15 @@
+<!doctype html>
+<!-- Risky-but-not-blockable copy behind a misleading "Continue" button: the
+     extension warns, then clears the clipboard if the user leaves the browser. -->
+<html><head><meta charset="utf-8"><title>Setup</title></head>
+<body>
+  <h1>Finish setup</h1>
+  <pre id="cmd">powershell -ExecutionPolicy Bypass -File .\setup.ps1</pre>
+  <button id="go">Continue</button>
+  <script>
+    document.getElementById('go').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(document.getElementById('cmd').textContent); window.copyResult = 'ok'; }
+      catch (e) { window.copyResult = String(e); }
+    });
+  </script>
+</body></html>

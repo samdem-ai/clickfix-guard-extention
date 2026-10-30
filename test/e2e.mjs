@@ -166,7 +166,7 @@ async function chromium(bin) {
           await evaluate(s, "window.dispatchEvent(new FocusEvent('blur')), true");
         },
         async screenshot(file) {
-          await send("Emulation.setDeviceMetricsOverride", { width: 1100, height: 760, deviceScaleFactor: 1, mobile: false }, s);
+          await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }, s);
           const { data } = await send("Page.captureScreenshot", { format: "png" }, s);
           writeFileSync(file, Buffer.from(data, "base64"));
         },

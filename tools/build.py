@@ -26,9 +26,25 @@ def files():
                     yield os.path.relpath(os.path.join(dirpath, name), ROOT).replace(os.sep, "/")
 
 
+def manifest_for(manifest, target):
+    """Drop the other browser's keys so neither browser warns about them.
+
+    The repo manifest serves both (for loading unpacked); packages are per store.
+    """
+    m = json.loads(json.dumps(manifest))
+    if target == "firefox":
+        m["background"].pop("service_worker", None)
+        m["permissions"] = [p for p in m["permissions"] if p != "offscreen"]
+    else:
+        m["background"].pop("scripts", None)
+        m.pop("browser_specific_settings", None)
+    return (json.dumps(m, indent=2) + "\n").encode("utf-8")
+
+
 def main():
     with open(os.path.join(ROOT, "manifest.json"), encoding="utf-8") as fh:
-        version = json.load(fh)["version"]
+        manifest = json.load(fh)
+    version = manifest["version"]
     dist = os.path.join(ROOT, "dist")
     os.makedirs(dist, exist_ok=True)
     shipped = sorted(files())
@@ -39,6 +55,9 @@ def main():
                 # Fixed timestamp: identical input gives an identical archive.
                 info = zipfile.ZipInfo(rel, date_time=(2026, 1, 1, 0, 0, 0))
                 info.compress_type = zipfile.ZIP_DEFLATED
+                if rel == "manifest.json":
+                    zf.writestr(info, manifest_for(manifest, target))
+                    continue
                 with open(os.path.join(ROOT, rel), "rb") as fh:
                     zf.writestr(info, fh.read())
         print(f"{os.path.relpath(out, ROOT)}  ({len(shipped)} files)")

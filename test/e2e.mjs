@@ -17,6 +17,8 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PAGES = join(ROOT, "test", "pages");
+// EXTENSION=/path/to/unpacked tests a built package instead of the repo folder.
+const EXT = process.env.EXTENSION || ROOT;
 const GECKO_ID = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8")).browser_specific_settings.gecko.id;
 const NOTICE_PREFIX = "# ClickFix Guard blocked";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -85,7 +87,7 @@ async function chromium(bin) {
   const profile = mkdtempSync(join(tmpdir(), "cfg-chromium-"));
   const { proc, url } = launch(bin, [
     "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
-    `--load-extension=${ROOT}`, `--disable-extensions-except=${ROOT}`,
+    `--load-extension=${EXT}`, `--disable-extensions-except=${EXT}`,
     "--disable-features=DisableLoadExtensionCommandLineSwitch",
     "--no-first-run", "--no-default-browser-check", "--disable-gpu", "about:blank",
   ], /DevTools listening on (ws:\/\/\S+)/);
@@ -198,7 +200,7 @@ async function firefox(bin) {
     /WebDriver BiDi listening on (ws:\/\/\S+)/);
   const c = await rpc((await url).replace(/\/?$/, "/session"));
   await c.send("session.new", { capabilities: {} });
-  await c.send("webExtension.install", { extensionData: { type: "path", path: ROOT } });
+  await c.send("webExtension.install", { extensionData: { type: "path", path: EXT } });
 
   const evaluate = async (context, expression) => {
     const r = await c.send("script.evaluate", {

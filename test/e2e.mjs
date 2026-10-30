@@ -1,23 +1,251 @@
-// End-to-end test: loads the unpacked extension into headless Chromium, serves
-// the lure / benign pages in test/pages, clicks like a user and checks what
-// actually lands on the clipboard and whether the warning appears.
+// End-to-end test in real browsers: loads the unpacked extension, serves the
+// lure / benign pages in test/pages, clicks like a user and checks what lands
+// on the clipboard, whether the warning appears and what the popup logs.
 //
-// Run: node test/e2e.mjs   (needs a Chromium build that allows --load-extension;
-// set CHROME=/path/to/chromium to override)
+//   node test/e2e.mjs            # every browser found
+//   node test/e2e.mjs chromium   # or: firefox
+//
+// Chromium is driven over CDP (--load-extension), Firefox over WebDriver BiDi
+// (webExtension.install). Override binaries with CHROME=... / FIREFOX=...
+// Uses only Node built-ins (global WebSocket, Node >= 22).
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PAGES = join(ROOT, "test", "pages");
-const CHROME = process.env.CHROME || ["/usr/bin/chromium", "/usr/bin/chromium-browser"].find(existsSync);
+const GECKO_ID = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8")).browser_specific_settings.gecko.id;
 const NOTICE_PREFIX = "# ClickFix Guard blocked";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// --- static server -----------------------------------------------------------
+async function waitFor(fn, ms = 5000) {
+  const end = Date.now() + ms;
+  let v;
+  while (Date.now() < end) {
+    try { v = await fn(); } catch (_) { v = null; }
+    if (v) return v;
+    await sleep(100);
+  }
+  return v;
+}
+
+// --- JSON-over-WebSocket RPC (shared by CDP and BiDi) ------------------------
+async function rpc(url) {
+  const ws = new WebSocket(url);
+  await new Promise((r, j) => { ws.onopen = r; ws.onerror = () => j(new Error("ws connect failed: " + url)); });
+  let nextId = 1;
+  const pending = new Map();
+  const listeners = new Set();
+  ws.onmessage = (m) => {
+    const msg = JSON.parse(m.data);
+    if (msg.id && pending.has(msg.id)) {
+      const { resolve, reject } = pending.get(msg.id);
+      pending.delete(msg.id);
+      if (msg.error) reject(new Error(typeof msg.error === "string" ? `${msg.error}: ${msg.message}` : msg.error.message));
+      else resolve(msg.result);
+    } else {
+      for (const l of listeners) l(msg);
+    }
+  };
+  return {
+    send(method, params = {}, extra = {}) {
+      return new Promise((resolve, reject) => {
+        const id = nextId++;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ id, method, params, ...extra }));
+      });
+    },
+    on: (l) => listeners.add(l),
+    close: () => ws.close(),
+  };
+}
+
+function launch(bin, args, pattern) {
+  const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+  const url = new Promise((resolve, reject) => {
+    let buf = "";
+    const t = setTimeout(() => reject(new Error(`${bin} did not start:\n${buf.slice(-2000)}`)), 30000);
+    const onData = (d) => {
+      buf += d;
+      const m = buf.match(pattern);
+      if (m) { clearTimeout(t); resolve(m[1]); }
+    };
+    proc.stdout.on("data", onData);
+    proc.stderr.on("data", onData);
+    proc.on("exit", (code) => reject(new Error(`${bin} exited (${code}):\n${buf.slice(-2000)}`)));
+  });
+  return { proc, url };
+}
+
+// --- Chromium driver (CDP) ------------------------------------------------------
+async function chromium(bin) {
+  const profile = mkdtempSync(join(tmpdir(), "cfg-chromium-"));
+  const { proc, url } = launch(bin, [
+    "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
+    `--load-extension=${ROOT}`, `--disable-extensions-except=${ROOT}`,
+    "--disable-features=DisableLoadExtensionCommandLineSwitch",
+    "--no-first-run", "--no-default-browser-check", "--disable-gpu", "about:blank",
+  ], /DevTools listening on (ws:\/\/\S+)/);
+  const c = await rpc(await url);
+  const frames = new Map(); // page session -> [iframe sessions]
+  c.on((m) => {
+    if (m.method === "Target.attachedToTarget" && m.params.targetInfo.type === "iframe") {
+      if (!frames.has(m.sessionId)) frames.set(m.sessionId, []);
+      frames.get(m.sessionId).push(m.params.sessionId);
+    }
+  });
+  const send = (method, params, sessionId) => c.send(method, params, sessionId ? { sessionId } : {});
+  const evaluate = async (sessionId, expression) => {
+    const r = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true, userGesture: true }, sessionId);
+    if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || "eval failed");
+    return r.result.value;
+  };
+
+  const sw = await waitFor(async () => (await send("Target.getTargets")).targetInfos
+    .find((t) => t.type === "service_worker" && t.url.endsWith("/src/background.js")), 10000);
+  if (!sw) throw new Error("extension not loaded (does this Chromium allow --load-extension?)");
+  const base = sw.url.replace(/\/src\/background\.js$/, ""); // URL.origin is "null" for chrome-extension:
+
+  async function attach(targetId) {
+    const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
+    await send("Runtime.enable", {}, sessionId);
+    await send("Emulation.setFocusEmulationEnabled", { enabled: true }, sessionId).catch(() => {});
+    return sessionId;
+  }
+
+  return {
+    name: "chromium",
+    async grant(origins) {
+      for (const origin of origins) {
+        await send("Browser.grantPermissions", { origin, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
+      }
+    },
+    async open(pageUrl) {
+      const { targetId } = await send("Target.createTarget", { url: "about:blank" });
+      const s = await attach(targetId);
+      await send("Page.enable", {}, s);
+      await send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, s);
+      const loaded = new Promise((r) => c.on((m) => { if (m.method === "Page.loadEventFired" && m.sessionId === s) r(); }));
+      await send("Page.navigate", { url: pageUrl }, s);
+      await loaded;
+      return {
+        eval: (expr) => evaluate(s, expr),
+        async frameEval(expr) {
+          const fs = (await waitFor(() => frames.get(s)))?.[0];
+          if (!fs) throw new Error("no out-of-process iframe");
+          await send("Emulation.setFocusEmulationEnabled", { enabled: true }, fs).catch(() => {});
+          return evaluate(fs, expr);
+        },
+        async screenshot(file) {
+          await send("Emulation.setDeviceMetricsOverride", { width: 1100, height: 760, deviceScaleFactor: 1, mobile: false }, s);
+          const { data } = await send("Page.captureScreenshot", { format: "png" }, s);
+          writeFileSync(file, Buffer.from(data, "base64"));
+        },
+        close: () => send("Target.closeTarget", { targetId }),
+      };
+    },
+    async openExtensionPage(path) {
+      // Extension pages can't be reached with Page.navigate; let the extension open the tab.
+      const swSession = await attach(sw.targetId);
+      const pageUrl = `${base}/${path}`;
+      await evaluate(swSession, `chrome.tabs.create({ url: ${JSON.stringify(pageUrl)} }).then(() => true)`);
+      const t = await waitFor(async () => (await send("Target.getTargets")).targetInfos
+        .find((x) => x.type === "page" && x.url.startsWith(pageUrl)), 10000);
+      if (!t) throw new Error("extension page did not open");
+      const s = await attach(t.targetId);
+      await waitFor(() => evaluate(s, "document.readyState === 'complete'"));
+      return { eval: (expr) => evaluate(s, expr), close: () => send("Target.closeTarget", { targetId: t.targetId }) };
+    },
+    async quit() {
+      c.close();
+      proc.kill();
+      await sleep(300);
+      rmSync(profile, { recursive: true, force: true });
+    },
+  };
+}
+
+// --- Firefox driver (WebDriver BiDi) --------------------------------------------
+async function firefox(bin) {
+  const profile = mkdtempSync(join(tmpdir(), "cfg-firefox-"));
+  const uuid = "6b1d2a5e-6f3c-4d57-9c1e-0c1f9a7e2b10";
+  writeFileSync(join(profile, "user.js"), [
+    // Let tests read the clipboard without Firefox's "Paste" confirmation menu.
+    `user_pref("dom.events.testing.asyncClipboard", true);`,
+    // Fixed moz-extension:// UUID so the popup URL is predictable.
+    `user_pref("extensions.webextensions.uuids", ${JSON.stringify(JSON.stringify({ [GECKO_ID]: uuid }))});`,
+    `user_pref("browser.shell.checkDefaultBrowser", false);`,
+    `user_pref("datareporting.policy.dataSubmissionEnabled", false);`,
+    `user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);`,
+    `user_pref("browser.startup.homepage_override.mstone", "ignore");`,
+  ].join("\n"));
+  const { proc, url } = launch(bin, ["--headless", "--remote-debugging-port=0", "--profile", profile, "--no-remote"],
+    /WebDriver BiDi listening on (ws:\/\/\S+)/);
+  const c = await rpc((await url).replace(/\/?$/, "/session"));
+  await c.send("session.new", { capabilities: {} });
+  await c.send("webExtension.install", { extensionData: { type: "path", path: ROOT } });
+
+  const evaluate = async (context, expression) => {
+    const r = await c.send("script.evaluate", {
+      expression, target: { context }, awaitPromise: true, userActivation: true, resultOwnership: "none",
+    });
+    if (r.type === "exception") throw new Error(r.exceptionDetails.text);
+    return unwrap(r.result);
+  };
+
+  async function newTab(pageUrl) {
+    const { context } = await c.send("browsingContext.create", { type: "tab" });
+    await c.send("browsingContext.navigate", { context, url: pageUrl, wait: "complete" });
+    return context;
+  }
+
+  return {
+    name: "firefox",
+    async grant() { /* covered by dom.events.testing.asyncClipboard */ },
+    async open(pageUrl) {
+      const context = await newTab(pageUrl);
+      return {
+        eval: (expr) => evaluate(context, expr),
+        async frameEval(expr) {
+          const child = await waitFor(async () => {
+            const { contexts } = await c.send("browsingContext.getTree", { root: context });
+            return contexts[0]?.children?.find((k) => k.url.includes("/captcha.html"))?.context;
+          });
+          if (!child) throw new Error("iframe context not found");
+          return evaluate(child, expr);
+        },
+        close: () => c.send("browsingContext.close", { context }),
+      };
+    },
+    // BiDi refuses to navigate to moz-extension:// pages. The background relay
+    // is still covered: the iframe case only passes if it forwards the warning.
+    openExtensionPage: null,
+    async quit() {
+      await c.send("session.end").catch(() => {});
+      c.close();
+      proc.kill();
+      await sleep(500);
+      rmSync(profile, { recursive: true, force: true });
+    },
+  };
+}
+
+// BiDi remote values -> plain JS.
+function unwrap(v) {
+  if (!v) return v;
+  switch (v.type) {
+    case "undefined": case "null": return null;
+    case "string": case "number": case "boolean": return v.value;
+    case "array": return v.value.map(unwrap);
+    case "object": return Object.fromEntries(v.value.map(([k, x]) => [typeof k === "string" ? k : unwrap(k), unwrap(x)]));
+    default: return v.value ?? null;
+  }
+}
+
+// --- test cases (browser-independent) -------------------------------------------
 const server = createServer((req, res) => {
   const file = normalize(join(PAGES, new URL(req.url, "http://x").pathname));
   if (!file.startsWith(PAGES) || !existsSync(file)) { res.writeHead(404).end(); return; }
@@ -25,226 +253,105 @@ const server = createServer((req, res) => {
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const PORT = server.address().port;
+const BASE = `http://localhost:${PORT}`;
 
-// --- browser -----------------------------------------------------------------
-if (!CHROME) { console.error("No Chromium found; set CHROME="); process.exit(1); }
-const profile = mkdtempSync(join(tmpdir(), "cfg-e2e-"));
-const proc = spawn(CHROME, [
-  "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
-  `--load-extension=${ROOT}`, `--disable-extensions-except=${ROOT}`,
-  "--disable-features=DisableLoadExtensionCommandLineSwitch",
-  "--no-first-run", "--no-default-browser-check", "--disable-gpu", "about:blank",
-], { stdio: ["ignore", "ignore", "pipe"] });
+const clickJs = (sel) => `(document.querySelector(${JSON.stringify(sel)}).focus(), document.querySelector(${JSON.stringify(sel)}).click(), true)`;
+const CLIP = "navigator.clipboard.readText()";
+const RESET = "navigator.clipboard.writeText('sentinel').then(() => true)";
+const OVERLAY = "document.querySelector('clickfix-guard-alert')?.dataset.verdict || null";
 
-const wsUrl = await new Promise((resolve, reject) => {
-  let buf = "";
-  const t = setTimeout(() => reject(new Error("Chromium did not start:\n" + buf)), 20000);
-  proc.stderr.on("data", (d) => {
-    buf += d;
-    const m = buf.match(/DevTools listening on (ws:\/\/\S+)/);
-    if (m) { clearTimeout(t); resolve(m[1]); }
-  });
-});
+async function runCases(b, results) {
+  const check = (name, cond, info) => {
+    results.push(!!cond);
+    console.log(`${cond ? "PASS" : "FAIL"}  [${b.name}] ${name}${cond ? "" : "  -> " + JSON.stringify(info)}`);
+  };
+  await b.grant([BASE, `http://127.0.0.1:${PORT}`]);
 
-// --- minimal CDP client --------------------------------------------------------
-const ws = new WebSocket(wsUrl);
-await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
-let nextId = 1;
-const pending = new Map();
-const listeners = [];
-ws.onmessage = (m) => {
-  const msg = JSON.parse(m.data);
-  if (msg.id && pending.has(msg.id)) {
-    const { resolve, reject } = pending.get(msg.id);
-    pending.delete(msg.id);
-    msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
-  } else if (msg.method) {
-    for (const l of listeners) l(msg);
+  for (const [name, page, sel] of [
+    ["fake CAPTCHA (clipboard.writeText)", "captcha.html", "#robot"],
+    ["hidden textarea (execCommand)", "exec.html", "#robot"],
+    ["copy-event hijack (setData)", "setdata.html", "#fix"],
+  ]) {
+    const p = await b.open(`${BASE}/${page}`);
+    await p.eval(RESET);
+    await p.eval(clickJs(sel));
+    const verdict = await waitFor(() => p.eval(OVERLAY));
+    const clip = await p.eval(CLIP);
+    check(`${name}: payload replaced by notice`, clip?.startsWith(NOTICE_PREFIX), { clip });
+    check(`${name}: block warning shown`, verdict === "block", { verdict });
+    // SCREENSHOT=path.png captures the warning UI (Chromium) for the README.
+    if (process.env.SCREENSHOT && p.screenshot && page === "captcha.html") await p.screenshot(process.env.SCREENSHOT);
+    await p.close();
   }
+
+  {
+    const p = await b.open(`${BASE}/iframe.html`);
+    await p.eval(RESET);
+    await waitFor(() => p.frameEval("document.readyState === 'complete' && !!document.querySelector('#robot')"));
+    await p.frameEval("(window.focus(), true)");
+    await p.frameEval(clickJs("#robot"));
+    const frameResult = await waitFor(() => p.frameEval("window.copyResult || null"));
+    const verdict = await waitFor(() => p.eval(OVERLAY));
+    const clip = await p.eval(CLIP);
+    check("cross-origin iframe lure: payload replaced", clip?.startsWith(NOTICE_PREFIX), { clip, frameResult });
+    check("cross-origin iframe lure: warning shown in top page", verdict === "block", { verdict });
+    await p.close();
+  }
+
+  {
+    const p = await b.open(`${BASE}/benign.html`);
+    await p.eval(RESET);
+    await p.eval(clickJs("#copy-npm"));
+    await waitFor(() => p.eval("window.copyResult"));
+    await sleep(300);
+    let clip = await p.eval(CLIP);
+    check("benign npm command copied unchanged", clip === "npm install --save express", { clip });
+    check("benign npm command: no warning", (await p.eval(OVERLAY)) === null, {});
+    await p.eval(clickJs("#copy-docker"));
+    const verdict = await waitFor(() => p.eval(OVERLAY));
+    clip = await p.eval(CLIP);
+    check("installer one-liner copied unchanged", clip === "curl -fsSL https://get.docker.com | sh", { clip });
+    check("installer one-liner: non-blocking warning toast", verdict === "warn", { verdict });
+    await p.close();
+  }
+
+  if (!b.openExtensionPage) {
+    console.log(`SKIP  [${b.name}] popup checks (automation cannot open extension pages)`);
+  } else {
+    const p = await b.openExtensionPage("popup/popup.html");
+    const n = await waitFor(async () => {
+      const k = await p.eval("document.querySelectorAll('#log li').length");
+      return k >= 5 ? k : null;
+    });
+    const blocked = await p.eval("document.getElementById('blocked').textContent");
+    check("popup lists logged detections", n >= 5, { n });
+    check("popup counts blocks", Number(blocked) >= 4, { blocked });
+    await p.close();
+  }
+}
+
+const DRIVERS = {
+  chromium: [chromium, process.env.CHROME || ["/usr/bin/chromium", "/usr/bin/chromium-browser"].find(existsSync)],
+  firefox: [firefox, process.env.FIREFOX || ["/usr/bin/firefox", "/usr/bin/firefox-esr"].find(existsSync)],
 };
-const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
-  const id = nextId++;
-  pending.set(id, { resolve, reject });
-  ws.send(JSON.stringify({ id, method, params, sessionId }));
-});
-const waitEvent = (pred, ms = 10000) => new Promise((resolve, reject) => {
-  const t = setTimeout(() => reject(new Error("timeout waiting for CDP event")), ms);
-  const l = (msg) => { if (pred(msg)) { clearTimeout(t); listeners.splice(listeners.indexOf(l), 1); resolve(msg); } };
-  listeners.push(l);
-});
-const evaluate = async (sessionId, expression) => {
-  const r = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true, userGesture: true }, sessionId);
-  if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || "eval failed");
-  return r.result.value;
-};
-
-// Wait for the extension's background service worker: proves the manifest loaded.
-await send("Target.setDiscoverTargets", { discover: true });
-const swTarget = await (async () => {
-  for (let i = 0; i < 50; i++) {
-    const { targetInfos } = await send("Target.getTargets");
-    const sw = targetInfos.find((t) => t.type === "service_worker" && t.url.endsWith("/src/background.js"));
-    if (sw) return sw;
-    await sleep(200);
-  }
-  throw new Error("extension service worker not found: --load-extension may be unsupported by this browser");
-})();
-const extOrigin = swTarget.url.replace(/\/src\/background\.js$/, ""); // URL.origin is "null" for chrome-extension:
-
-// Child frame sessions (out-of-process iframes) per page session.
-const frames = new Map();
-listeners.push((m) => {
-  if (m.method === "Target.attachedToTarget" && m.params.targetInfo.type === "iframe") {
-    if (!frames.has(m.sessionId)) frames.set(m.sessionId, []);
-    frames.get(m.sessionId).push(m.params.sessionId);
-  }
-});
-
-async function openPage(url) {
-  const { targetId } = await send("Target.createTarget", { url: "about:blank" });
-  const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
-  await send("Page.enable", {}, sessionId);
-  await send("Runtime.enable", {}, sessionId);
-  await send("Emulation.setFocusEmulationEnabled", { enabled: true }, sessionId);
-  await send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, sessionId);
-  const loaded = waitEvent((m) => m.method === "Page.loadEventFired" && m.sessionId === sessionId);
-  await send("Page.navigate", { url }, sessionId);
-  await loaded;
-  return { targetId, sessionId };
-}
-
-async function click(sessionId, x, y) {
-  for (const type of ["mousePressed", "mouseReleased"]) {
-    await send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 }, sessionId);
+const wanted = process.argv[2] ? [process.argv[2]] : Object.keys(DRIVERS);
+const all = [];
+for (const name of wanted) {
+  const [make, bin] = DRIVERS[name] || [];
+  if (!make) { console.error(`unknown browser ${name}`); process.exit(1); }
+  if (!bin) { console.log(`SKIP  [${name}] browser not found`); continue; }
+  let b;
+  try {
+    b = await make(bin);
+    await runCases(b, all);
+  } catch (e) {
+    console.log(`FAIL  [${name}] ${e.message}`);
+    all.push(false);
+  } finally {
+    if (b) await b.quit();
   }
 }
-
-async function rectCenter(sessionId, selector) {
-  return evaluate(sessionId, `(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
-}
-
-async function clipboard(sessionId) {
-  return evaluate(sessionId, "navigator.clipboard.readText()");
-}
-
-async function resetClipboard(sessionId) {
-  // Our own write from the test, not a page script: use the clipboard of the
-  // isolated harness via a plain value the analyzer allows.
-  await evaluate(sessionId, "navigator.clipboard.writeText('sentinel')");
-}
-
-const overlay = (sessionId) => evaluate(sessionId, `document.querySelector('clickfix-guard-alert')?.dataset.verdict || null`);
-
-async function waitFor(fn, ms = 4000) {
-  const end = Date.now() + ms;
-  let v;
-  while (Date.now() < end) {
-    v = await fn();
-    if (v) return v;
-    await sleep(100);
-  }
-  return v;
-}
-
-// --- cases ---------------------------------------------------------------------
-const results = [];
-function check(name, cond, info) {
-  results.push({ name, ok: !!cond });
-  console.log(`${cond ? "PASS" : "FAIL"}  ${name}${cond ? "" : "  -> " + JSON.stringify(info)}`);
-}
-
-const base = `http://localhost:${PORT}`;
-for (const origin of [base, `http://127.0.0.1:${PORT}`]) {
-  await send("Browser.grantPermissions", { origin, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
-}
-
-async function lureCase(name, page, selector) {
-  const { targetId, sessionId } = await openPage(`${base}/${page}`);
-  await resetClipboard(sessionId);
-  const p = await rectCenter(sessionId, selector);
-  await click(sessionId, p.x, p.y);
-  const verdict = await waitFor(() => overlay(sessionId));
-  const clip = await clipboard(sessionId);
-  check(`${name}: payload replaced by notice`, clip.startsWith(NOTICE_PREFIX), { clip });
-  check(`${name}: block warning shown`, verdict === "block", { verdict });
-  await send("Target.closeTarget", { targetId });
-}
-
-await lureCase("fake CAPTCHA (clipboard.writeText)", "captcha.html", "#robot");
-await lureCase("hidden textarea (execCommand)", "exec.html", "#robot");
-await lureCase("copy-event hijack (setData)", "setdata.html", "#fix");
-
-// Lure in a cross-origin iframe: click inside the frame, expect the warning on top.
-{
-  const { targetId, sessionId } = await openPage(`${base}/iframe.html`);
-  const fs = (await waitFor(() => frames.get(sessionId), 5000) || [])[0];
-  await resetClipboard(sessionId);
-  let frameResult = null;
-  if (fs) {
-    await waitFor(() => evaluate(fs, "document.readyState === 'complete' && !!document.querySelector('#robot')"));
-    // A real click focuses the frame; emulate that, then click with user activation.
-    await send("Emulation.setFocusEmulationEnabled", { enabled: true }, fs).catch(() => {});
-    await evaluate(fs, "window.focus(); document.querySelector('#robot').focus(); true");
-    await evaluate(fs, "document.querySelector('#robot').click()");
-    frameResult = await waitFor(() => evaluate(fs, "window.copyResult || null"));
-  }
-  const verdict = await waitFor(() => overlay(sessionId));
-  const clip = await clipboard(sessionId);
-  check("cross-origin iframe lure: payload replaced", clip.startsWith(NOTICE_PREFIX), { clip, oopif: !!fs, frameResult });
-  check("cross-origin iframe lure: warning shown in top page", verdict === "block", { verdict });
-  await send("Target.closeTarget", { targetId });
-}
-
-// Benign docs page.
-{
-  const { targetId, sessionId } = await openPage(`${base}/benign.html`);
-  await resetClipboard(sessionId);
-  let p = await rectCenter(sessionId, "#copy-npm");
-  await click(sessionId, p.x, p.y);
-  await sleep(500);
-  let clip = await clipboard(sessionId);
-  check("benign npm command copied unchanged", clip === "npm install --save express", { clip });
-  check("benign npm command: no warning", (await overlay(sessionId)) === null, {});
-
-  p = await rectCenter(sessionId, "#copy-docker");
-  await click(sessionId, p.x, p.y);
-  const verdict = await waitFor(() => overlay(sessionId));
-  clip = await clipboard(sessionId);
-  check("installer one-liner copied unchanged", clip === "curl -fsSL https://get.docker.com | sh", { clip });
-  check("installer one-liner: non-blocking warning toast", verdict === "warn", { verdict });
-  await send("Target.closeTarget", { targetId });
-}
-
-// Background log recorded the detections.
-{
-  const { sessionId } = await send("Target.attachToTarget", { targetId: swTarget.targetId, flatten: true });
-  const stats = await evaluate(sessionId, "chrome.storage.local.get('stats').then((d) => d.stats)");
-  check("background logged blocks and warnings", stats && stats.block >= 4 && stats.warn >= 1, { stats });
-}
-
-// Popup renders the log (opened as a tab by the extension itself).
-{
-  const popupUrl = `${extOrigin}/popup/popup.html`;
-  const { sessionId: sw } = await send("Target.attachToTarget", { targetId: swTarget.targetId, flatten: true });
-  const created = await evaluate(sw, `chrome.tabs.create({ url: ${JSON.stringify(popupUrl)} }).then((t) => [t.id, t.pendingUrl || t.url], (e) => String(e))`).catch((e) => String(e));
-  const tgt = await waitFor(async () => (await send("Target.getTargets")).targetInfos
-    .find((t) => t.type === "page" && t.url.startsWith(popupUrl)), 10000);
-  if (!tgt) throw new Error("popup tab did not open: " + JSON.stringify((await send("Target.getTargets")).targetInfos.map((t) => [t.type, t.url])) + " create=" + JSON.stringify(created));
-  const { targetId } = tgt;
-  const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
-  const n = await waitFor(() => evaluate(sessionId, "document.querySelectorAll('#log li').length"));
-  const dbg = await evaluate(sessionId, "location.href + ' | ' + document.readyState + ' | ' + document.body.innerText.slice(0,200)").catch((e) => String(e));
-  check("popup lists detections", n >= 5, { n, dbg });
-  await send("Target.closeTarget", { targetId });
-}
-
-// --- teardown ------------------------------------------------------------------
-ws.close();
-proc.kill();
 server.close();
-await sleep(300);
-rmSync(profile, { recursive: true, force: true });
-const failed = results.filter((r) => !r.ok).length;
-console.log(`\n${results.length - failed}/${results.length} checks passed`);
-process.exit(failed ? 1 : 0);
+const failed = all.filter((ok) => !ok).length;
+console.log(`\n${all.length - failed}/${all.length} checks passed`);
+process.exit(failed || !all.length ? 1 : 0);

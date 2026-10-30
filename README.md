@@ -130,7 +130,7 @@ Ready-made packages and step-by-step instructions are on the
 - **Chrome / Edge / Brave:** open `chrome://extensions`, turn on
   *Developer mode*, click *Load unpacked* and pick this folder.
 - **Firefox (142+) / Zen / LibreWolf:** run `npm run build`, then install
-  `dist/clickfix-guard-1.0.0-firefox.xpi`. For a temporary install, use
+  `dist/clickfix-guard-<version>-firefox.xpi`. For a temporary install, use
   `about:debugging#/runtime/this-firefox` → *Load Temporary Add-on*. For a
   permanent one, use `about:addons` → ⚙ → *Install Add-on From File*; regular
   Firefox requires the `.xpi` to be signed through AMO (the `.xpi` on the

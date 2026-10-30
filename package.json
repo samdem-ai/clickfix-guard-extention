@@ -1,6 +1,6 @@
 {
   "name": "clickfix-guard",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Browser extension (Chrome + Firefox) that blocks ClickFix / fake-CAPTCHA paste-and-run attacks.",
   "license": "MIT",

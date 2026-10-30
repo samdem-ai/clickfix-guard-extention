@@ -139,6 +139,12 @@ async function chromium(bin) {
           await send("Emulation.setFocusEmulationEnabled", { enabled: true }, fs).catch(() => {});
           return evaluate(fs, expr);
         },
+        async pressCopy() {
+          for (const type of ["rawKeyDown", "keyUp"]) {
+            await send("Input.dispatchKeyEvent", { type, key: "c", code: "KeyC", windowsVirtualKeyCode: 67, modifiers: 2,
+              commands: type === "rawKeyDown" ? ["copy"] : [] }, s);
+          }
+        },
         // Headless Chromium keeps every tab "visible" and focused, so leaving is
         // simulated: drop focus emulation, then deliver the window blur.
         async leave() {
@@ -224,6 +230,11 @@ async function firefox(bin) {
           return evaluate(child, expr);
         },
         async leave() { /* opening another tab really blurs and hides this one */ },
+        async pressCopy() {
+          await c.send("input.performActions", { context, actions: [{ type: "key", id: "kbd", actions: [
+            { type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "c" },
+            { type: "keyUp", value: "c" }, { type: "keyUp", value: "\uE009" }] }] });
+        },
         close: () => c.send("browsingContext.close", { context }),
       };
     },
@@ -326,6 +337,25 @@ async function runCases(b, results) {
     clip = await q.eval(CLIP);
     check("leaving after a benign copy keeps the clipboard", clip === "curl -fsSL https://get.docker.com | sh", { clip });
     await q.close();
+    await p.close();
+  }
+
+  // The user selects text and presses Ctrl+C themselves.
+  {
+    const p = await b.open(`${BASE}/usercopy.html`);
+    const select = (id) => `(getSelection().selectAllChildren(document.getElementById(${JSON.stringify(id)})), true)`;
+    await p.eval(RESET);
+    await p.eval(select("good"));
+    await p.pressCopy();
+    let clip = await waitFor(async () => { const c = await p.eval(CLIP); return c !== "sentinel" ? c : null; });
+    check("user Ctrl+C of a normal command: copied unchanged", clip === "git clone https://github.com/samdem-ai/portfolio.git", { clip });
+    check("user Ctrl+C of a normal command: no warning", (await p.eval(OVERLAY)) === null, {});
+    await p.eval(select("bad"));
+    await p.pressCopy();
+    const verdict = await waitFor(() => p.eval(OVERLAY));
+    clip = await p.eval(CLIP);
+    check("user Ctrl+C of a lure command: replaced by notice", clip.startsWith(NOTICE_PREFIX), { clip });
+    check("user Ctrl+C of a lure command: block warning", verdict === "block", { verdict });
     await p.close();
   }
 

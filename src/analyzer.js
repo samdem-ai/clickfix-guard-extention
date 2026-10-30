@@ -107,7 +107,129 @@
       .replace(/`(?=[A-Za-z])/g, "")                // PowerShell backtick escapes: i`e`x
       .replace(/(['"])\s*\+\s*\1/g, "")             // 'pow'+'ershell' concatenation
       .replace(/[ \t]{2,}/g, " ");
-    return { text: s, deobfuscated: deob, signals };
+    const escaped = deob;
+    deob = rebuildStrings(deob);
+    return { text: s, escaped, deobfuscated: deob, signals };
+  }
+
+  // --- PowerShell string reconstruction ------------------------------------------
+  // Evaluates the string tricks lures use to hide keywords ([char] codes, -join,
+  // -f, -replace, reversed indexing, characters picked out of $env:ComSpec), as
+  // pure text rewriting. Nothing is executed. Repeats until stable (max 4 passes).
+  const Q = `(?:'[^'\\n]*'|"[^"\\n]*")`;
+  const QLIST = `${Q}(?:\\s*,\\s*${Q})*`;
+  const unq = (t) => t.slice(1, -1);
+  const lit = (t) => "'" + t.replace(/'/g, "") + "'";
+  const listItems = (t) => (t.match(new RegExp(Q, "g")) || []).map(unq);
+  // Typical values of variables lures index into.
+  const KNOWN_VARS = {
+    "$env:comspec": "C:\\WINDOWS\\system32\\cmd.exe",
+    "$pshome": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0",
+    "$shellid": "Microsoft.PowerShell",
+    "$verbosepreference": "SilentlyContinue",
+  };
+  const PS_REWRITES = [
+    // [char]105+[char]101+[char]120  /  [char[]](105,101,120)
+    [/(?:\[char\]\s*(?:\(\s*(?:0x[0-9a-f]+|\d{1,5})\s*\)|0x[0-9a-f]+|\d{1,5})(?:\s*[+,]\s*(?=\[char\]))?){2,}/gi, (m) =>
+      lit((m.match(/0x[0-9a-f]+|\d{1,5}/gi) || []).map((n) => String.fromCharCode(Number(n))).join(""))],
+    [/\[char\[\]\]\s*\(\s*((?:0x[0-9a-f]+|\d{1,5})(?:\s*,\s*(?:0x[0-9a-f]+|\d{1,5}))*)\s*\)/gi, (_m, list) =>
+      lit(list.split(/\s*,\s*/).map((n) => String.fromCharCode(Number(n))).join(""))],
+    // ("{1}{0}" -f 'ex','i')
+    [new RegExp(`\\(?\\s*(${Q})\\s*-f\\s*(${QLIST})\\s*\\)?`, "gi"), (_m, fmt, args) => {
+      const a = listItems(args);
+      return lit(unq(fmt).replace(/\{(\d+)\}/g, (_x, i) => (a[+i] !== undefined ? a[+i] : "")));
+    }],
+    // ('i','e','x') -join ''   /   -join ('i','e','x')
+    [new RegExp(`\\(\\s*(${QLIST})\\s*\\)\\s*-join\\s*(?:''|"")?`, "gi"), (_m, list) => lit(listItems(list).join(""))],
+    [new RegExp(`-join\\s*\\(\\s*(${QLIST})\\s*\\)`, "gi"), (_m, list) => lit(listItems(list).join(""))],
+    // 'xei'[-1..-3]  (reverse)
+    [new RegExp(`(${Q})\\s*\\[\\s*-1\\s*\\.\\.\\s*-\\s*\\(?\\s*(?:\\d+|${Q}\\.length)\\s*\\)?\\s*\\]`, "gi"), (_m, q) =>
+      lit(unq(q).split("").reverse().join(""))],
+    // 'iXeXx' -replace 'X',''   (case-insensitive, like PowerShell)   /   -creplace
+    [new RegExp(`(${Q})\\s*-(c?)replace\\s*(${Q})\\s*(?:,\\s*(${Q}))?`, "gi"), (_m, q, cs, pat, rep) => {
+      try { return lit(unq(q).replace(new RegExp(unq(pat), cs ? "g" : "gi"), rep ? unq(rep) : "")); } catch (_) { return _m; }
+    }],
+    // $env:comspec[4,15,25]  /  $pshome[21]
+    [/(\$env:comspec|\$pshome|\$shellid|\$verbosepreference)\s*\[\s*(\d+(?:\s*,\s*\d+)*)\s*\]/gi, (_m, v, idx) =>
+      lit(idx.split(/\s*,\s*/).map((i) => KNOWN_VARS[v.toLowerCase()][+i] || "").join(""))],
+    // 'a'+'b' left over from the rewrites above, and  'iex' -join ''
+    [/(['"])\s*\+\s*\1/g, ""],
+    [new RegExp(`(${Q})\\s*-join\\s*(?:''|"")`, "gi"), (_m, q) => q],
+  ];
+
+  function rebuildStrings(text) {
+    let s = text;
+    for (let pass = 0; pass < 4; pass++) {
+      const before = s;
+      for (const [re, fn] of PS_REWRITES) s = s.replace(re, fn);
+      if (s === before) break;
+    }
+    return s;
+  }
+
+  // --- Generic command-line parsing -------------------------------------------------
+  // Rules name known tools; the parser recognises the *shape* of fetch-and-run
+  // command lines so that an unlisted binary or interpreter is still caught.
+  const BENIGN_PROGRAMS = new Set(("git npm npx pnpm yarn bun deno node pip pip3 pipx uv poetry python python3 py cargo " +
+    "rustup go docker podman kubectl helm terraform ansible brew apt apt-get dnf yum pacman snap flatpak winget choco " +
+    "scoop code dotnet java mvn gradle make cmake gcc clang ssh scp rsync ls cd cat echo grep find sed awk tar unzip " +
+    "mkdir cp mv rm touch chmod sudo nvm sdk gh az aws gcloud ollama conda mamba wsl set-executionpolicy").split(" "));
+  const INTERPRETERS = new Set(("sh bash zsh dash ksh fish python python3 perl ruby node osascript powershell pwsh cmd " +
+    "iex invoke-expression wscript cscript mshta").split(" "));
+  const URL_TOKEN_RE = /\bhttps?:\/\/\S+|\\\\\d{1,3}(?:\.\d{1,3}){3}\S*/i;
+  const SAVE_RE = /(?:\s-o\s+|\s-O\s+|\s--output\s+|-outfile\s+|\s>\s*)(['"]?)([^\s'"|;&]+)\1/i;
+  const EXEC_EXT_RE = /\.(?:exe|com|bat|cmd|ps1|vbs|vbe|js|jse|hta|msi|scr|dll|sh|command|app|pkg|dmg|py)\b/i;
+
+  // Split on ; && || & | and newlines outside quotes. Returns [{text, op}].
+  function splitSegments(text) {
+    const out = [];
+    let cur = "", quote = "", op = "";
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (quote) { cur += c; if (c === quote) quote = ""; continue; }
+      if (c === "'" || c === '"') { quote = c; cur += c; continue; }
+      const two = text.slice(i, i + 2);
+      let sep = null;
+      if (two === "&&" || two === "||") sep = two;
+      else if (c === ";" || c === "\n" || c === "|" || (c === "&" && text[i - 1] !== ">" && text[i + 1] !== ">")) sep = c;
+      if (sep) {
+        if (cur.trim()) out.push({ text: cur.trim(), op });
+        cur = ""; op = sep; i += sep.length - 1;
+      } else cur += c;
+    }
+    if (cur.trim()) out.push({ text: cur.trim(), op });
+    return out.slice(0, 50);
+  }
+
+  function programOf(seg) {
+    let t = seg.replace(/^[&.(\s]+/, "").replace(/^(?:start(?:-process)?|call|sudo|exec|nohup|cmd(?:\.exe)?\s+\/[ck])\s+(?:\/\w+\s+)*/i, "");
+    const tok = (t.match(/^(['"])(.*?)\1|^\S+/) || [""])[0].replace(/^['"]|['"]$/g, "");
+    const base = tok.split(/[\\/]/).pop().toLowerCase();
+    return { token: tok, name: base.replace(/\.(?:exe|com|bat|cmd|ps1|vbs|js|hta|msi)$/, "") };
+  }
+
+  function parseCommandLine(text) {
+    const segs = splitSegments(text);
+    const f = { pipeToInterpreter: false, runsSaved: false, unknownWithUrl: null, looksLikeCommand: false, hasUrl: false };
+    const saved = [];
+    segs.forEach((seg, i) => {
+      const prog = programOf(seg.text);
+      const url = URL_TOKEN_RE.test(seg.text);
+      const flags = /\s(?:--?[a-z]|\/[a-z?]\b)/i.test(seg.text);
+      const isUrl = /^(?:https?:|www\.)/i.test(prog.token);
+      const execLike = !isUrl && (EXEC_EXT_RE.test(prog.token) || /[\\/]/.test(prog.token) || INTERPRETERS.has(prog.name));
+      if (url) f.hasUrl = true;
+      if (execLike || (flags && /^[\w.-]+$/.test(prog.name))) f.looksLikeCommand = true;
+      if (seg.op === "|" && INTERPRETERS.has(prog.name) && segs.slice(0, i).some((s) => URL_TOKEN_RE.test(s.text))) f.pipeToInterpreter = true;
+      const m = url && SAVE_RE.exec(seg.text);
+      if (m) saved.push(m[2].split(/[\\/]/).pop().toLowerCase());
+      if (i > 0 && saved.length && saved.some((name) => name && seg.text.toLowerCase().includes(name)) && !m) f.runsSaved = true;
+      // Named interpreters are scored by their own rules; this is for the rest.
+      if (url && !isUrl && (execLike || flags) && !BENIGN_PROGRAMS.has(prog.name) && !INTERPRETERS.has(prog.name) && !f.unknownWithUrl) {
+        f.unknownWithUrl = prog.name || prog.token;
+      }
+    });
+    return f;
   }
 
   function b64ToBinary(b64) {
@@ -185,7 +307,20 @@
       const hit = firstMatch(re, corpus);
       if (hit) add(id, w, label, hit);
     }
-    const isCommand = reasons.length > 0;
+    const parsed = parseCommandLine(corpus);
+    const ruleIds = new Set(reasons.map((r) => r.id));
+    // Shapes the named rules already score (including irm|iex, which is weighed
+    // by download_execute with its installer exemption) are not double-counted.
+    const known = ["pipe_to_shell", "download_execute", "temp_drop_exec", "base64_to_shell", "mshta", "certutil",
+      "bitsadmin", "msiexec_remote", "regsvr32_remote", "rundll32_remote", "finger", "pipe_to_cmd"].some((id) => ruleIds.has(id)) ||
+      (ruleIds.has("downloader") && ruleIds.has("invoke_expression"));
+    if (!known && (parsed.pipeToInterpreter || (parsed.hasUrl && parsed.runsSaved))) {
+      add("fetch_and_run", 4, "Downloads something and runs it in the same command");
+    }
+    if (parsed.unknownWithUrl && !known && !ruleIds.has("downloader")) {
+      add("unknown_program_url", 2, `Runs a program (${parsed.unknownWithUrl.slice(0, 30)}) against a remote address`, parsed.unknownWithUrl);
+    }
+    const isCommand = reasons.length > 0 || (parsed.looksLikeCommand && parsed.hasUrl);
     if (!isCommand) {
       return { verdict: "allow", score: 0, reasons: [], decoded, signals: norm.signals, isCommand: false, deceptive: false };
     }
@@ -211,8 +346,11 @@
     if (decoy) add("decoy_comment", 5, "Hides the command behind a fake 'verification' comment", decoy);
     if (norm.signals.includes("whitespace_padding")) add("whitespace_padding", 3, "Pads the command with spaces to hide it in the Run dialog");
     if (norm.signals.includes("invisible_chars")) add("invisible_chars", 2, "Contains invisible characters that split keywords");
-    if (norm.deobfuscated !== norm.text.replace(/\u00A0/g, " ").replace(/[ \t]{2,}/g, " ")) {
+    if (norm.escaped !== norm.text.replace(/\u00A0/g, " ").replace(/[ \t]{2,}/g, " ")) {
       add("escape_obfuscation", 2, "Uses ^, ` or string concatenation to disguise keywords");
+    }
+    if (norm.deobfuscated !== norm.escaped) {
+      add("string_reconstruction", 3, "Builds hidden keywords from character codes or string tricks");
     }
     if (decoded.length) add("decoded_payload", 1, "Contains an encoded payload (decoded for inspection)");
 
@@ -252,7 +390,7 @@
     return `# ClickFix Guard blocked a malicious command${where}. Websites never ask you to paste commands into the Run box or a terminal.`;
   }
 
-  const api = { analyze, normalize, notice, WARN_AT, BLOCK_AT };
+  const api = { analyze, normalize, notice, parseCommandLine, rebuildStrings, WARN_AT, BLOCK_AT };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ClickFixAnalyzer = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

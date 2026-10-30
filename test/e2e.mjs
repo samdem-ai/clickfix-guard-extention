@@ -299,7 +299,7 @@ async function runCases(b, results) {
     results.push(!!cond);
     console.log(`${cond ? "PASS" : "FAIL"}  [${b.name}] ${name}${cond ? "" : "  -> " + JSON.stringify(info)}`);
   };
-  await b.grant([BASE, `http://127.0.0.1:${PORT}`]);
+  await b.grant([BASE, `http://127.0.0.1:${PORT}`, ...(process.env.DEMO_URL ? [new URL(process.env.DEMO_URL).origin] : [])]);
 
   for (const [name, page, sel] of [
     ["fake CAPTCHA (clipboard.writeText)", "captcha.html", "#robot"],
@@ -412,7 +412,8 @@ async function runCases(b, results) {
 
   // The public demo site: real mouse clicks into each simulated lure frame.
   {
-    const p = await b.open(`${BASE}/demo/index.html`);
+    // DEMO_URL=https://… runs this case against the deployed site instead.
+    const p = await b.open(process.env.DEMO_URL || `${BASE}/demo/index.html`);
     for (const [scenario, sel, want] of [
       ["captcha", "#robot", "blocked"], ["hidden", "#verify", "blocked"], ["terminal", "#fix", "blocked"],
       ["delayed", "#copy", "blocked"], ["benign", "#copy", "fine"],

@@ -5,6 +5,8 @@ A browser extension for **Chrome and Firefox** that stops *ClickFix* attacks
 copies a malicious command to your clipboard, then talks you into pasting it
 into **Win+R**, PowerShell or Terminal.
 
+**[Try the live demo →](https://clickfix-guard-demo.vercel.app)** Safe, simulated lures you can test with and without the extension.
+
 ![Warning shown when a fake CAPTCHA page copies a malicious command](docs/warning.png)
 
 ## The threat

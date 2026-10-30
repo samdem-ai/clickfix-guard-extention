@@ -8,6 +8,8 @@
     "test": "node --test test/",
     "e2e": "node test/e2e.mjs",
     "build": "python3 tools/build.py",
-    "lint:firefox": "python3 tools/build.py && npx --yes addons-linter --self-hosted dist/*-firefox.xpi"
+    "lint:firefox": "python3 tools/build.py && npx --yes addons-linter --self-hosted dist/*-firefox.xpi",
+    "train": "node ml/train.mjs",
+    "eval": "node ml/evaluate.mjs"
   }
 }

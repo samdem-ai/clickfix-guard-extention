@@ -1,0 +1,228 @@
+{
+  "setup": "leave-one-family-out, no page context, programmatic copy; corpus seed 2026",
+  "families": [
+    {
+      "family": "mshta",
+      "n": 160,
+      "rules": 0.91875,
+      "ml": 1,
+      "fused": 1,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.010416666666666666,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "ps_download_iex",
+      "n": 160,
+      "rules": 1,
+      "ml": 1,
+      "fused": 1,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.0125,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "ps_encoded",
+      "n": 160,
+      "rules": 1,
+      "ml": 0.9125,
+      "fused": 1,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.014583333333333334,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "ps_string_obfuscation",
+      "n": 160,
+      "rules": 1,
+      "ml": 1,
+      "fused": 1,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.014583333333333334,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "cmd_temp_drop",
+      "n": 160,
+      "rules": 1,
+      "ml": 1,
+      "fused": 1,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.0125,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "msiexec",
+      "n": 160,
+      "rules": 0.85625,
+      "ml": 0.99375,
+      "fused": 1,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.0125,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "rundll_regsvr",
+      "n": 160,
+      "rules": 0.9125,
+      "ml": 0.95,
+      "fused": 0.98125,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.0125,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "certutil_bits",
+      "n": 160,
+      "rules": 0.9625,
+      "ml": 0.99375,
+      "fused": 1,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.0125,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "finger",
+      "n": 160,
+      "rules": 1,
+      "ml": 0.95625,
+      "fused": 1,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.0125,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "lolbin_wrappers",
+      "n": 160,
+      "rules": 0.81875,
+      "ml": 1,
+      "fused": 0.99375,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.0125,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "mac_curl_bash",
+      "n": 160,
+      "rules": 0.75625,
+      "ml": 0.9375,
+      "fused": 0.89375,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.00625,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "mac_base64",
+      "n": 160,
+      "rules": 1,
+      "ml": 0.95625,
+      "fused": 1,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.014583333333333334,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "osascript_quarantine",
+      "n": 160,
+      "rules": 0.48125,
+      "ml": 0.46875,
+      "fused": 0.51875,
+      "fusedFlag": 1,
+      "fp": {
+        "rules": 0,
+        "ml": 0.014583333333333334,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "script_host_webdav",
+      "n": 160,
+      "rules": 0.4375,
+      "ml": 0.86875,
+      "fused": 0.6875,
+      "fusedFlag": 0.79375,
+      "fp": {
+        "rules": 0,
+        "ml": 0.014583333333333334,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    },
+    {
+      "family": "other_interpreters",
+      "n": 160,
+      "rules": 0.0375,
+      "ml": 0.89375,
+      "fused": 0.69375,
+      "fusedFlag": 0.9625,
+      "fp": {
+        "rules": 0,
+        "ml": 0.0125,
+        "fused": 0,
+        "fusedWarn": 0.029166666666666667
+      }
+    }
+  ],
+  "mean": {
+    "rules": 0.8120833333333333,
+    "ml": 0.9287500000000002,
+    "fused": 0.9179166666666667,
+    "fusedFlag": 0.98375
+  },
+  "benignFalsePositive": {
+    "rules": 0,
+    "ml": 0.012638888888888887,
+    "fused": 0,
+    "fusedWarn": 0.02916666666666666
+  },
+  "benignTestSize": 480
+}

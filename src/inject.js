@@ -13,8 +13,8 @@
 (function () {
   "use strict";
 
-  const A = globalThis.ClickFixAnalyzer;
-  try { delete globalThis.ClickFixAnalyzer; } catch (_) { /* non-configurable */ }
+  const A = globalThis.ClickFixAnalyzer; // already holds the model (src/model.js loads first)
+  try { delete globalThis.ClickFixAnalyzer; delete globalThis.ClickFixModel; } catch (_) { /* non-configurable */ }
   if (!A || typeof Clipboard === "undefined") return;
 
   const EVENT = "clickfix-guard:detection";

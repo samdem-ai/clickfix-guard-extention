@@ -13,6 +13,12 @@
 (function (root) {
   "use strict";
 
+  // On-device classifier weights (src/model.js). Optional: rules work without it.
+  let MODEL = root.ClickFixModel || null;
+  if (!MODEL && typeof module !== "undefined" && typeof require === "function") {
+    try { MODEL = require("./model.js"); } catch (_) { MODEL = null; }
+  }
+
   const WARN_AT = 5;
   const BLOCK_AT = 8;
   const MAX_LEN = 20000;
@@ -72,6 +78,20 @@
     ["abused_host", 3, "Uses a tunnelling, paste or file-drop host", ABUSED_HOST_RE],
     ["plain_http", 1, "Downloads over unencrypted http://", /\bhttp:\/\//i],
   ];
+
+  // Official installer one-liners that fetch-and-run by design (HTTPS only).
+  // Host-exact; GitHub raw content only for specific projects, since attackers
+  // host payloads there too. Lowers the score, never overrides lure evidence.
+  const KNOWN_INSTALLERS = [
+    /^https:\/\/(?:astral\.sh|get\.scoop\.sh|deno\.land|community\.chocolatey\.org|bun\.sh|get\.docker\.com|sh\.rustup\.rs|ollama\.com|get\.pnpm\.io|tailscale\.com|starship\.rs|fly\.io|get\.k3s\.io|get\.sdkman\.io|get\.volta\.sh|mise\.run|claude\.ai|brew\.sh|install\.python-poetry\.org|nixos\.org|sh\.uv\.dev)(?:[\/:"'\s]|$)/i,
+    /^https:\/\/raw\.githubusercontent\.com\/(?:Homebrew\/install|nvm-sh\/nvm|ohmyzsh\/ohmyzsh)\//i,
+  ];
+  const URL_ALL_RE = /\bhttps?:\/\/[^\s'"`)|;]+|\\\\\d{1,3}(?:\.\d{1,3}){3}\S*/gi;
+  // Reasons that mean the command executes something (not just downloads it).
+  const EXEC_IDS = new Set(["invoke_expression", "pipe_to_shell", "base64_to_shell", "mshta", "rundll32_remote", "regsvr32_remote",
+    "certutil", "bitsadmin", "msiexec_remote", "finger", "pipe_to_cmd", "script_host", "temp_drop_exec", "osascript",
+    "fetch_and_run", "reflective_load", "encoded_command", "from_base64", "persistence", "defender_tamper",
+    "quarantine_strip", "unknown_program_url", "string_reconstruction", "interpreter_remote"]);
 
   // Decoy comments shown in the Run dialog so the victim sees "verification" text.
   const DECOY_RE =
@@ -210,7 +230,7 @@
 
   function parseCommandLine(text) {
     const segs = splitSegments(text);
-    const f = { pipeToInterpreter: false, runsSaved: false, unknownWithUrl: null, looksLikeCommand: false, hasUrl: false };
+    const f = { pipeToInterpreter: false, runsSaved: false, unknownWithUrl: null, looksLikeCommand: false, hasUrl: false, inlineRemote: null };
     const saved = [];
     segs.forEach((seg, i) => {
       const prog = programOf(seg.text);
@@ -219,6 +239,8 @@
       const isUrl = /^(?:https?:|www\.)/i.test(prog.token);
       const execLike = !isUrl && (EXEC_EXT_RE.test(prog.token) || /[\\/]/.test(prog.token) || INTERPRETERS.has(prog.name));
       if (url) f.hasUrl = true;
+      // python -c / node -e / perl -e / powershell -Command "...https://..."
+      if (url && INTERPRETERS.has(prog.name) && /\s-(?:c|e|command|enc\w*)\b/i.test(seg.text) && !f.inlineRemote) f.inlineRemote = prog.name;
       if (execLike || (flags && /^[\w.-]+$/.test(prog.name))) f.looksLikeCommand = true;
       if (seg.op === "|" && INTERPRETERS.has(prog.name) && segs.slice(0, i).some((s) => URL_TOKEN_RE.test(s.text))) f.pipeToInterpreter = true;
       const m = url && SAVE_RE.exec(seg.text);
@@ -290,6 +312,54 @@
     return out;
   }
 
+  // --- Classifier features ------------------------------------------------------
+  // Hashed character 3-5-grams of the deobfuscated + decoded text, digits folded
+  // to 0 so addresses and IDs generalise. Shared verbatim by ml/train.mjs.
+  const NGRAM_BUCKETS = 1 << 14;
+
+  function corpusOf(text) {
+    const norm = normalize(text);
+    const decoded = decodePayloads(norm.deobfuscated);
+    return { norm, decoded, corpus: [norm.deobfuscated].concat(decoded).join("\n") };
+  }
+
+  function fnv1a(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h;
+  }
+
+  // Returns parallel arrays of bucket indices and L2-normalised values.
+  function featurize(corpus) {
+    const t = " " + corpus.toLowerCase().replace(/[0-9]/g, "0").replace(/\s+/g, " ").slice(0, 4000) + " ";
+    const counts = new Map();
+    for (let n = 3; n <= 5; n++) {
+      for (let i = 0; i + n <= t.length; i++) {
+        const k = (fnv1a(n + t.slice(i, i + n)) % NGRAM_BUCKETS);
+        counts.set(k, (counts.get(k) || 0) + 1);
+      }
+    }
+    const idx = [], val = [];
+    let norm = 0;
+    for (const [k, c] of counts) {
+      const v = Math.log1p(c);
+      idx.push(k); val.push(v); norm += v * v;
+    }
+    norm = Math.sqrt(norm) || 1;
+    for (let i = 0; i < val.length; i++) val[i] /= norm;
+    return { idx, val };
+  }
+
+  function predict(model, corpus) {
+    const { idx, val } = featurize(corpus);
+    let z = model.b;
+    for (let i = 0; i < idx.length; i++) z += (model.w[idx[i]] || 0) * val[i];
+    return 1 / (1 + Math.exp(-z));
+  }
+
   function firstMatch(re, s) {
     const m = re.exec(s);
     return m ? m[0].trim().slice(0, 120) : null;
@@ -297,9 +367,9 @@
 
   function analyze(text, context) {
     const ctx = context || {};
-    const norm = normalize(text);
-    const decoded = decodePayloads(norm.deobfuscated);
-    const corpus = [norm.deobfuscated].concat(decoded).join("\n");
+    const { norm, decoded, corpus } = corpusOf(text);
+    const model = ctx.model !== undefined ? ctx.model : MODEL;
+    const ml = model ? predict(model, corpus) : null;
     const reasons = [];
     const add = (id, weight, label, match) => reasons.push({ id, weight, label, match: match || null });
 
@@ -317,13 +387,25 @@
     if (!known && (parsed.pipeToInterpreter || (parsed.hasUrl && parsed.runsSaved))) {
       add("fetch_and_run", 4, "Downloads something and runs it in the same command");
     }
+    if (parsed.inlineRemote && !known && !ruleIds.has("invoke_expression")) {
+      add("interpreter_remote", 2, `Runs inline ${parsed.inlineRemote} code that reaches out to the internet`, parsed.inlineRemote);
+    }
     if (parsed.unknownWithUrl && !known && !ruleIds.has("downloader")) {
       add("unknown_program_url", 2, `Runs a program (${parsed.unknownWithUrl.slice(0, 30)}) against a remote address`, parsed.unknownWithUrl);
     }
+    // The model adds evidence. Weights were set on a validation corpus (seed 555)
+    // where p >= 0.5 already had ~0.2% benign false positives and p >= 0.8 none;
+    // the model is under-confident on attack families it has not seen.
+    // Only a confident score may open the command gate on its own.
+    const mlLabel = () => `On-device model rates this as a malicious command (${Math.round(ml * 100)}%)`;
+    const executes = () => reasons.some((r) => EXEC_IDS.has(r.id));
+    // A download with no execution step is never pushed over the line by the model alone.
+    if (ml !== null && ml >= 0.8) add("ml_malicious", executes() ? 5 : 2, mlLabel());
     const isCommand = reasons.length > 0 || (parsed.looksLikeCommand && parsed.hasUrl);
     if (!isCommand) {
-      return { verdict: "allow", score: 0, reasons: [], decoded, signals: norm.signals, isCommand: false, deceptive: false };
+      return { verdict: "allow", score: 0, reasons: [], decoded, signals: norm.signals, isCommand: false, deceptive: false, ml };
     }
+    if (ml !== null && ml >= 0.5 && ml < 0.8 && executes()) add("ml_malicious", 3, mlLabel());
 
     const ids = new Set(reasons.map((r) => r.id));
     for (const [id, w, label, re] of URL_RULES) {
@@ -340,6 +422,12 @@
     }
     if (ids.has("pipe_to_shell") && shady) {
       add("shady_pipe_to_shell", 3, "Pipes a script from an untrusted location into a shell");
+    }
+
+    const urls = norm.deobfuscated.match(URL_ALL_RE) || [];
+    if (urls.length && !shady && !ids.has("hidden_window") && !ids.has("encoded_command") &&
+        urls.every((u) => KNOWN_INSTALLERS.some((re) => re.test(u)))) {
+      add("known_installer", -4, "Official installer from a well-known project");
     }
 
     const decoy = firstMatch(DECOY_RE, norm.text);
@@ -380,7 +468,7 @@
     const verdict = score >= BLOCK_AT ? "block" : score >= WARN_AT ? "warn" : "allow";
     reasons.sort((a, b) => b.weight - a.weight);
     const deceptive = reasons.some((r) => DECEPTION_IDS.has(r.id));
-    return { verdict, score, reasons, decoded, signals: norm.signals, lureScore, isCommand: true, deceptive };
+    return { verdict, score, reasons, decoded, signals: norm.signals, lureScore, isCommand: true, deceptive, ml };
   }
 
   // Text written to the clipboard instead of a blocked command. Starts with '#'
@@ -390,7 +478,7 @@
     return `# ClickFix Guard blocked a malicious command${where}. Websites never ask you to paste commands into the Run box or a terminal.`;
   }
 
-  const api = { analyze, normalize, notice, parseCommandLine, rebuildStrings, WARN_AT, BLOCK_AT };
+  const api = { analyze, normalize, notice, parseCommandLine, rebuildStrings, corpusOf, featurize, predict, NGRAM_BUCKETS, WARN_AT, BLOCK_AT };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ClickFixAnalyzer = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

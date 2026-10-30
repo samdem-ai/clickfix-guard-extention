@@ -133,7 +133,8 @@ Ready-made packages and step-by-step instructions are on the
   `dist/clickfix-guard-1.0.0-firefox.xpi`. For a temporary install, use
   `about:debugging#/runtime/this-firefox` → *Load Temporary Add-on*. For a
   permanent one, use `about:addons` → ⚙ → *Install Add-on From File*; regular
-  Firefox requires the `.xpi` to be signed through AMO.
+  Firefox requires the `.xpi` to be signed through AMO (the `.xpi` on the
+  Releases page is signed).
 
 One Manifest V3 codebase serves both browsers. `manifest.json` is the Chrome
 manifest; `npm run build` applies `manifest.firefox.json` for Firefox

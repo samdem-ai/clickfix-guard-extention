@@ -10,7 +10,7 @@
 // Uses only Node built-ins (global WebSocket, Node >= 22).
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -208,11 +208,18 @@ async function firefox(bin) {
     `user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);`,
     `user_pref("browser.startup.homepage_override.mstone", "ignore");`,
   ].join("\n"));
+  if (process.env.SIGNED_XPI) {
+    mkdirSync(join(profile, "extensions"));
+    copyFileSync(process.env.SIGNED_XPI, join(profile, "extensions", `${GECKO_ID}.xpi`));
+    appendFileSync(join(profile, "user.js"), `\nuser_pref("extensions.autoDisableScopes", 0);\nuser_pref("xpinstall.signatures.required", true);\n`);
+  }
   const { proc, url } = launch(bin, ["--headless", "--remote-debugging-port=0", "--profile", profile, "--no-remote"],
     /WebDriver BiDi listening on (ws:\/\/\S+)/);
   const c = await rpc((await url).replace(/\/?$/, "/session"));
   await c.send("session.new", { capabilities: {} });
-  await c.send("webExtension.install", { extensionData: firefoxPackage() });
+  // SIGNED_XPI=path installs like a user would (profile add-on, signature
+  // checks enforced by release Firefox) instead of a temporary install.
+  if (!process.env.SIGNED_XPI) await c.send("webExtension.install", { extensionData: firefoxPackage() });
 
   const evaluate = async (context, expression) => {
     const r = await c.send("script.evaluate", {

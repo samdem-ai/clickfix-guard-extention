@@ -184,6 +184,20 @@ Every test payload points at reserved addresses (RFC 5737 TEST-NET IPs,
 `.example` / `.test` domains). The extension never executes or fetches
 anything it analyses.
 
+## Building from source (reproducible)
+
+Requirements: Node.js 22 or newer and Python 3.11 or newer. No packages to install.
+
+```bash
+node ml/train.mjs        # regenerates src/model.js (deterministic, identical bytes)
+python3 tools/build.py   # writes dist/clickfix-guard-<version>-{chrome.zip,firefox.xpi}
+```
+
+Builds are reproducible: fixed file order and timestamps, so the same source gives
+a byte-identical `.xpi`. Nothing is minified or bundled; every shipped file is a
+repository file, except `manifest.json` in the Firefox package, which is
+`manifest.json` merged with `manifest.firefox.json` by `tools/build.py`.
+
 ## Limitations
 
 - **This is a detector, not a guarantee.** A lure that gets the user to

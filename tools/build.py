@@ -2,8 +2,8 @@
 """Package the extension for both stores.
 
 Writes dist/clickfix-guard-<version>-chrome.zip and
-dist/clickfix-guard-<version>-firefox.xpi (same files; one manifest serves
-both browsers). Only shipped files are included, never tests or tools.
+dist/clickfix-guard-<version>-firefox.xpi (same files; the Firefox manifest
+is manifest.json plus manifest.firefox.json). Only shipped files are included, never tests or tools.
 Run from anywhere: python tools/build.py
 """
 
@@ -27,17 +27,16 @@ def files():
 
 
 def manifest_for(manifest, target):
-    """Drop the other browser's keys so neither browser warns about them.
-
-    The repo manifest serves both (for loading unpacked); packages are per store.
-    """
+    """manifest.json is the Chrome manifest (loadable unpacked as-is). Firefox
+    gets manifest.firefox.json applied: background scripts instead of a service
+    worker, its add-on id, and no Chrome-only permissions."""
     m = json.loads(json.dumps(manifest))
     if target == "firefox":
-        m["background"].pop("service_worker", None)
-        m["permissions"] = [p for p in m["permissions"] if p != "offscreen"]
-    else:
-        m["background"].pop("scripts", None)
-        m.pop("browser_specific_settings", None)
+        with open(os.path.join(ROOT, "manifest.firefox.json"), encoding="utf-8") as fh:
+            fx = json.load(fh)
+        m["background"] = fx["background"]
+        m["permissions"] = [p for p in m["permissions"] if p not in fx["remove_permissions"]]
+        m["browser_specific_settings"] = fx["browser_specific_settings"]
     return (json.dumps(m, indent=2) + "\n").encode("utf-8")
 
 

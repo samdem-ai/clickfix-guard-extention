@@ -8,7 +8,7 @@
 // Chromium is driven over CDP (--load-extension), Firefox over WebDriver BiDi
 // (webExtension.install). Override binaries with CHROME=... / FIREFOX=...
 // Uses only Node built-ins (global WebSocket, Node >= 22).
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,8 +18,15 @@ import { fileURLToPath } from "node:url";
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PAGES = join(ROOT, "test", "pages");
 // EXTENSION=/path/to/unpacked tests a built package instead of the repo folder.
+// The repo folder is the Chrome build; Firefox installs the built .xpi.
 const EXT = process.env.EXTENSION || ROOT;
-const GECKO_ID = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8")).browser_specific_settings.gecko.id;
+function firefoxPackage() {
+  if (process.env.EXTENSION) return { type: "path", path: process.env.EXTENSION };
+  execFileSync("python3", [join(ROOT, "tools", "build.py")], { stdio: "ignore" });
+  const version = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8")).version;
+  return { type: "archivePath", path: join(ROOT, "dist", `clickfix-guard-${version}-firefox.xpi`) };
+}
+const GECKO_ID = JSON.parse(readFileSync(join(ROOT, "manifest.firefox.json"), "utf8")).browser_specific_settings.gecko.id;
 const NOTICE_PREFIX = "# ClickFix Guard blocked";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -205,7 +212,7 @@ async function firefox(bin) {
     /WebDriver BiDi listening on (ws:\/\/\S+)/);
   const c = await rpc((await url).replace(/\/?$/, "/session"));
   await c.send("session.new", { capabilities: {} });
-  await c.send("webExtension.install", { extensionData: { type: "path", path: EXT } });
+  await c.send("webExtension.install", { extensionData: firefoxPackage() });
 
   const evaluate = async (context, expression) => {
     const r = await c.send("script.evaluate", {

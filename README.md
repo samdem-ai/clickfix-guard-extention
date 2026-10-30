@@ -122,22 +122,25 @@ blocked end to end.
 
 ## Install
 
-**From the repo (developer mode):**
+Ready-made packages and step-by-step instructions are on the
+[Releases page](https://github.com/samdem-ai/clickfix-guard-extention/releases/latest).
+
+**From the repo:**
 
 - **Chrome / Edge / Brave:** open `chrome://extensions`, turn on
   *Developer mode*, click *Load unpacked* and pick this folder.
-- **Firefox (142+):** open `about:debugging#/runtime/this-firefox`, click
-  *Load Temporary Add-on* and pick `manifest.json`. For a permanent install,
-  build the `.xpi` and sign it through AMO.
+- **Firefox (142+) / Zen / LibreWolf:** run `npm run build`, then install
+  `dist/clickfix-guard-1.0.0-firefox.xpi`. For a temporary install, use
+  `about:debugging#/runtime/this-firefox` → *Load Temporary Add-on*. For a
+  permanent one, use `about:addons` → ⚙ → *Install Add-on From File*; regular
+  Firefox requires the `.xpi` to be signed through AMO.
 
-**Packages:** `npm run build` writes `dist/clickfix-guard-1.0.0-chrome.zip`
-and `-firefox.xpi`.
-
-One Manifest V3 codebase serves both browsers. Background: a
-`service_worker` on Chrome, `scripts` on Firefox. Clipboard scrub: an
-offscreen document on Chrome, the background page on Firefox. Page hook:
-`"world": "MAIN"` content scripts. Each browser ignores the keys meant for
-the other.
+One Manifest V3 codebase serves both browsers. `manifest.json` is the Chrome
+manifest; `npm run build` applies `manifest.firefox.json` for Firefox
+(background `scripts` instead of a service worker, the add-on id, no
+`offscreen` permission). Clipboard scrub: an offscreen document on Chrome,
+the background page on Firefox. Page hook: `"world": "MAIN"` content
+scripts.
 
 ## Testing
 
@@ -200,7 +203,8 @@ anything it analyses.
 ## Layout
 
 ```
-manifest.json          MV3 manifest for Chrome + Firefox
+manifest.json          MV3 manifest (Chrome; loadable unpacked)
+manifest.firefox.json  Firefox overrides applied by the build
 src/analyzer.js        normalise/decode, rules, parser, classifier features, fusion
 src/model.js           trained classifier weights (generated)
 src/inject.js          MAIN-world clipboard hooks, intent signals, post-copy re-check

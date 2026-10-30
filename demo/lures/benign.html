@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- A normal docs copy button: should copy unchanged with no warning. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started</title><link rel="stylesheet" href="lure.css"></head>
+<body>
+  <h1>Getting started</h1>
+  <p>Install the package:</p>
+  <pre id="cmd">npm install express</pre>
+  <button id="copy">Copy</button>
+  <script src="lure.js"></script>
+  <script>
+    const cmd = document.getElementById("cmd").textContent;
+    document.getElementById("copy").addEventListener("click", async () => {
+      reportCopy("benign", cmd);
+      try { await navigator.clipboard.writeText(cmd); } catch (_) {}
+    });
+  </script>
+</body></html>

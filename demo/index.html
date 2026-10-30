@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClickFix Guard Demo</title>
+<meta name="description" content="Try ClickFix Guard against safe, simulated fake-CAPTCHA and paste-and-run attacks before installing it.">
+<link rel="icon" href="icon.png">
+<style>
+  :root {
+    --bg: #f7f7f9; --surface: #ffffff; --fg: #1b1b1f; --muted: #5f5f6a; --line: #e2e2e8;
+    --red: #c62828; --red-bg: #fdecec; --green: #2e7d32; --green-bg: #e9f6ea; --amber: #b25b00; --amber-bg: #fff4e5;
+    --blue: #2f6fdf; --code: #16161a; --code-fg: #f2f2f2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121215; --surface: #1c1c21; --fg: #ececf1; --muted: #a4a4ae; --line: #2f2f37;
+      --red: #ff6b6b; --red-bg: #3a1c1c; --green: #6fcf73; --green-bg: #18301a; --amber: #ffb35c; --amber-bg: #3a2a12;
+      --blue: #6b9bff; --code: #0c0c0f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
+  header.hero { display: flex; gap: 18px; align-items: center; margin-bottom: 8px; }
+  header.hero img { width: 64px; height: 64px; flex: none; }
+  h1 { font-size: clamp(26px, 4vw, 36px); line-height: 1.2; margin: 0; }
+  h2 { font-size: 22px; margin: 40px 0 10px; }
+  h3 { font-size: 17px; margin: 0; }
+  p { margin: 8px 0; }
+  a { color: var(--blue); }
+  .lead { font-size: 18px; color: var(--muted); max-width: 720px; }
+  .status { display: inline-flex; align-items: center; gap: 8px; margin-top: 14px; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--surface); font-size: 14px; }
+  .status .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .status.on .dot { background: var(--green); }
+  .status.off .dot { background: var(--red); }
+  .safe { margin: 20px 0; padding: 12px 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--green); font-size: 15px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 18px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
+  .card .top { padding: 14px 16px 6px; }
+  .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--red-bg); color: var(--red); margin-bottom: 6px; }
+  .tag.ok { background: var(--green-bg); color: var(--green); }
+  .card .desc { color: var(--muted); font-size: 14px; }
+  .frame { margin: 8px 16px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .frame .bar { display: flex; gap: 6px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .frame .bar i { width: 9px; height: 9px; border-radius: 50%; background: var(--line); display: inline-block; }
+  .frame iframe { display: block; width: 100%; height: 310px; border: 0; background: transparent; }
+  .result { margin: 8px 16px 16px; padding: 12px 14px; border-radius: 10px; font-size: 14px; background: var(--bg); border: 1px dashed var(--line); color: var(--muted); }
+  .result.blocked { background: var(--green-bg); border: 1px solid transparent; color: var(--fg); }
+  .result.exposed { background: var(--red-bg); border: 1px solid transparent; color: var(--fg); }
+  .result.warned { background: var(--amber-bg); border: 1px solid transparent; color: var(--fg); }
+  .result b { display: block; margin-bottom: 4px; }
+  .result code { display: block; margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: var(--code); color: var(--code-fg);
+    font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+  .result button { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
+  .install { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 18px; }
+  .install .card { padding: 16px; }
+  .install ol { padding-left: 20px; margin: 8px 0 0; }
+  .btn { display: inline-block; margin-top: 12px; padding: 9px 16px; border-radius: 8px; background: var(--blue); color: #fff; text-decoration: none; font-weight: 600; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font: 13px ui-monospace, Menlo, Consolas, monospace; background: var(--surface); }
+  footer { margin-top: 48px; color: var(--muted); font-size: 14px; }
+  @media (max-width: 520px) { header.hero img { width: 48px; height: 48px; } .frame iframe { height: 360px; } }
+</style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <img src="icon.png" alt="">
+    <div>
+      <h1>ClickFix Guard demo</h1>
+    </div>
+  </header>
+  <p class="lead">
+    "ClickFix" pages show a fake CAPTCHA or error, secretly copy a command to your clipboard, and ask you to paste it
+    into <kbd>Win</kbd>+<kbd>R</kbd> or Terminal. Try the simulated attacks below, with and without the extension.
+  </p>
+  <div class="status" id="status" role="status"><span class="dot"></span><span id="status-text">Click a scenario to check whether you're protected</span></div>
+
+  <div class="safe">
+    <strong>These demos are safe.</strong> Every command points to reserved test addresses
+    (<a href="https://www.rfc-editor.org/rfc/rfc5737">RFC 5737</a> IPs and <code>.invalid</code> domains) that cannot connect,
+    so nothing can download or run. Still: never paste commands from a website into Run, PowerShell or Terminal.
+  </div>
+
+  <h2>Try the attacks</h2>
+  <div class="grid">
+    <section class="card" data-scenario="captcha" data-malicious="true">
+      <div class="top"><span class="tag">Attack</span><h3>Fake CAPTCHA</h3>
+        <p class="desc">Ticking the box silently copies an <code>mshta</code> command, hidden behind spaces and a fake "Verification ID".</p></div>
+      <div class="frame"><div class="bar"><i></i><i></i><i></i>&nbsp;verify-human.example</div><iframe src="lures/captcha.html" title="Simulated fake CAPTCHA" allow="clipboard-write"></iframe></div>
+      <div class="result" aria-live="polite">Tick the box above.</div>
+    </section>
+
+    <section class="card" data-scenario="hidden" data-malicious="true">
+      <div class="top"><span class="tag">Attack</span><h3>Hidden PowerShell</h3>
+        <p class="desc">A "Verify" button copies a hidden-window PowerShell download-and-run from an invisible text box.</p></div>
+      <div class="frame"><div class="bar"><i></i><i></i><i></i>&nbsp;secure-check.example</div><iframe src="lures/hidden.html" title="Simulated connection check" allow="clipboard-write"></iframe></div>
+      <div class="result" aria-live="polite">Click Verify above.</div>
+    </section>
+
+    <section class="card" data-scenario="terminal" data-malicious="true">
+      <div class="top"><span class="tag">Attack</span><h3>macOS "font update"</h3>
+        <p class="desc">The page rewrites what gets copied into <code>curl … | bash</code> and sends you to Terminal.</p></div>
+      <div class="frame"><div class="bar"><i></i><i></i><i></i>&nbsp;docs-viewer.example</div><iframe src="lures/terminal.html" title="Simulated macOS fix page" allow="clipboard-write"></iframe></div>
+      <div class="result" aria-live="polite">Click Copy fix above.</div>
+    </section>
+
+    <section class="card" data-scenario="delayed" data-malicious="true">
+      <div class="top"><span class="tag">Attack</span><h3>Instructions after the copy</h3>
+        <p class="desc">Looks like an honest Copy button, then shows Win+R steps a moment later. The extension re-checks and cleans the clipboard.</p></div>
+      <div class="frame"><div class="bar"><i></i><i></i><i></i>&nbsp;viewer-setup.example</div><iframe src="lures/delayed.html" title="Simulated installer page" allow="clipboard-write"></iframe></div>
+      <div class="result" aria-live="polite">Click Copy above.</div>
+    </section>
+
+    <section class="card" data-scenario="benign" data-malicious="false">
+      <div class="top"><span class="tag ok">Normal</span><h3>Regular copy button</h3>
+        <p class="desc">A normal docs copy. ClickFix Guard should stay silent and copy it unchanged.</p></div>
+      <div class="frame"><div class="bar"><i></i><i></i><i></i>&nbsp;docs.example</div><iframe src="lures/benign.html" title="Simulated documentation page" allow="clipboard-write"></iframe></div>
+      <div class="result" aria-live="polite">Click Copy above.</div>
+    </section>
+  </div>
+
+  <h2>Install ClickFix Guard</h2>
+  <p>Free and open source. No network requests, no telemetry: everything runs in your browser.</p>
+  <div class="install">
+    <div class="card">
+      <h3>Firefox / Zen</h3>
+      <ol>
+        <li>Download <code>clickfix-guard-…-firefox.xpi</code> from the latest release.</li>
+        <li>Open <code>about:addons</code>, click ⚙ → <b>Install Add-on From File…</b> and pick the file.</li>
+      </ol>
+      <a class="btn" href="https://github.com/samdem-ai/clickfix-guard-extention/releases/latest">Latest release</a>
+    </div>
+    <div class="card">
+      <h3>Chrome / Edge / Brave</h3>
+      <ol>
+        <li>Download and unzip <code>clickfix-guard-…-chrome.zip</code>.</li>
+        <li>Open <code>chrome://extensions</code>, turn on <b>Developer mode</b>, click <b>Load unpacked</b> and pick the folder.</li>
+      </ol>
+      <a class="btn" href="https://github.com/samdem-ai/clickfix-guard-extention/releases/latest">Latest release</a>
+    </div>
+  </div>
+
+  <footer>
+    Built by <a href="https://samdem.vercel.app">Samy Debaili</a> ·
+    <a href="https://github.com/samdem-ai/clickfix-guard-extention">Source on GitHub</a> · MIT licence
+  </footer>
+</main>
+
+<script>
+  "use strict";
+  const ALERT_TAG = "clickfix-guard-alert";
+  const WAIT_MS = 6000; // covers the extension's post-copy re-checks (up to ~4.5 s)
+  const statusEl = document.getElementById("status");
+  const statusText = document.getElementById("status-text");
+  let pending = null;
+  let lastSettle = 0;
+  let protectedSeen = false;
+
+  function setStatus(on) {
+    statusEl.classList.toggle("on", on);
+    statusEl.classList.toggle("off", !on);
+    statusText.textContent = on ? "ClickFix Guard is active in this browser" : "ClickFix Guard not detected in this browser";
+  }
+
+  function render(card, kind, payload) {
+    const box = card.querySelector(".result");
+    box.className = "result " + kind;
+    box.replaceChildren();
+    const title = document.createElement("b");
+    const text = document.createElement("div");
+    if (kind === "blocked") {
+      title.textContent = "Blocked by ClickFix Guard";
+      text.textContent = "The command never reached your clipboard. If you paste now you get a harmless note.";
+    } else if (kind === "warned") {
+      title.textContent = "Flagged by ClickFix Guard";
+      text.textContent = "The copy was allowed with a warning, and it will be cleared if you leave the browser right away.";
+    } else if (kind === "fine") {
+      title.textContent = "Copied normally, no false alarm";
+      text.textContent = "Regular copy buttons are left alone.";
+    } else {
+      title.textContent = "Not protected: this is now on your clipboard";
+      text.textContent = "Pasted into Win+R or Terminal, a real version of this would download and run malware. (This one points to an address that can't connect.)";
+    }
+    box.append(title, text);
+    if (kind === "exposed") {
+      const code = document.createElement("code");
+      code.textContent = payload;
+      const clear = document.createElement("button");
+      clear.type = "button";
+      clear.textContent = "Clear my clipboard";
+      clear.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(""); clear.textContent = "Cleared"; } catch (_) { clear.textContent = "Copy any text to replace it"; }
+      });
+      box.append(code, clear);
+    }
+  }
+
+  function settle(verdict) {
+    if (!pending) return;
+    const { card, payload, timer, malicious } = pending;
+    clearTimeout(timer);
+    pending = null;
+    lastSettle = Date.now();
+    if (verdict === "block") { protectedSeen = true; setStatus(true); render(card, "blocked"); }
+    else if (verdict === "warn") { protectedSeen = true; setStatus(true); render(card, "warned"); }
+    else if (!malicious) render(card, "fine");
+    else { if (!protectedSeen) setStatus(false); render(card, "exposed", payload); }
+  }
+
+  // The extension mounts its warning on this (top) page, even for lures in frames.
+  // It can arrive just before or just after the frame's "copied" message, so the
+  // last warning is remembered and matched either way.
+  let lastAlert = { verdict: null, at: 0 };
+  function onAlert(v) {
+    if (!pending) return;
+    if (v === "block" || !pending.malicious) settle(v);
+    else pending.lastVerdict = v; // a warning may still escalate to a block
+  }
+  new MutationObserver((records) => {
+    for (const r of records) for (const n of r.addedNodes) {
+      if (n.nodeName && n.nodeName.toLowerCase() === ALERT_TAG) {
+        lastAlert = { verdict: n.dataset.verdict, at: Date.now() };
+        onAlert(lastAlert.verdict);
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+
+  window.addEventListener("message", (e) => {
+    if (e.origin !== location.origin || !e.data || e.data.type !== "cfg-demo-copied") return;
+    const frame = [...document.querySelectorAll("iframe")].find((f) => f.contentWindow === e.source);
+    const card = frame && frame.closest(".card");
+    if (!card) return;
+    if (pending) settle(pending.lastVerdict || null);
+    const malicious = card.dataset.malicious === "true";
+    const box = card.querySelector(".result");
+    box.className = "result";
+    box.textContent = "Checking…";
+    pending = { card, payload: String(e.data.payload), malicious, lastVerdict: null };
+    // Benign copies settle quickly; attacks wait for late re-checks.
+    pending.timer = setTimeout(() => settle(pending && pending.lastVerdict), malicious ? WAIT_MS : 2500);
+    // A warning that beat this message counts only if it is newer than the previous result.
+    if (lastAlert.at > lastSettle && Date.now() - lastAlert.at < 1500) onAlert(lastAlert.verdict);
+  });
+</script>
+</body>
+</html>

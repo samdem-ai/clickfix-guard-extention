@@ -165,8 +165,8 @@ async function chromium(bin) {
           await send("Emulation.setFocusEmulationEnabled", { enabled: false }, s);
           await evaluate(s, "window.dispatchEvent(new FocusEvent('blur')), true");
         },
-        async screenshot(file) {
-          await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }, s);
+        async screenshot(file, width = 1280, height = 800) {
+          await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false }, s);
           const { data } = await send("Page.captureScreenshot", { format: "png" }, s);
           writeFileSync(file, Buffer.from(data, "base64"));
         },
@@ -453,6 +453,8 @@ async function runCases(b, results) {
         return k || null;
       })()`), 10000);
       check(`demo site: ${scenario} -> ${want}`, got === want, { got });
+      // SCREENSHOT_DEMO=path.png captures the demo with the block warning (Chromium, 1440x900).
+      if (process.env.SCREENSHOT_DEMO && p.screenshot && scenario === "captcha") await p.screenshot(process.env.SCREENSHOT_DEMO, 1440, 900);
     }
     check("demo site: status shows extension active", (await p.eval("document.getElementById('status').classList.contains('on')")) === true, {});
     await p.close();

